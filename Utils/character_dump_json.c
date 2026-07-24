@@ -346,7 +346,7 @@ static void dump_itemdesc(FILE *out, const T_equipItemDescription *d)
     fputs("        }", out);
 }
 
-static void dump_inventory_record(FILE *out, const T_inventoryItemStruct *it, size_t idx)
+static void dump_inventory_record(FILE *out, const T_inventoryItemDiskStruct *it, size_t idx)
 {
     fputs("      {\n", out);
     fprintf(out, "        \"recordIndex\":%zu,\n", idx);
@@ -359,22 +359,19 @@ static void dump_inventory_record(FILE *out, const T_inventoryItemStruct *it, si
     fprintf(out, "        \"gridstarty\":%d,\n", (int)it->gridstarty);
     fprintf(out, "        \"gridspacesx\":%d,\n", (int)it->gridspacesx);
     fprintf(out, "        \"gridspacesy\":%d,\n", (int)it->gridspacesy);
-    fprintf(out, "        \"object\":\"0x%" PRIxPTR "\",\n", (uintptr_t)it->object);
     fprintf(out, "        \"objecttype\":%u,\n", (unsigned)it->objecttype);
-    fprintf(out, "        \"p_bitmap\":\"0x%" PRIxPTR "\",\n", (uintptr_t)it->p_bitmap);
     fprintf(out, "        \"storepage\":%u,\n", (unsigned)it->storepage);
     fprintf(out, "        \"numitems\":%u,\n", (unsigned)it->numitems);
     fputs("        \"itemdesc\":", out);
     dump_itemdesc(out, &it->itemdesc);
-    fprintf(out, ",\n        \"elementID\":\"0x%" PRIxPTR "\"\n", (uintptr_t)it->elementID);
-    fputs("      }", out);
+    fputs("\n      }", out);
 }
 
 static void dump_one_file(FILE *out, const char *path)
 {
     FILE *fp;
     T_playerStats stats;
-    T_inventoryItemStruct rec;
+    T_inventoryItemDiskStruct rec;
     size_t recIndex = 0;
     int first = 1;
 
@@ -390,7 +387,7 @@ static void dump_one_file(FILE *out, const char *path)
     fputs("  {\n", out);
     fputs("    \"path\":", out); json_string(out, path); fputs(",\n", out);
     fprintf(out, "    \"playerStatsSize\":%zu,\n", sizeof(T_playerStats));
-    fprintf(out, "    \"inventoryRecordSize\":%zu,\n", sizeof(T_inventoryItemStruct));
+    fprintf(out, "    \"inventoryRecordSize\":%zu,\n", sizeof(T_inventoryItemDiskStruct));
     fputs("    \"playerStats\":", out);
     dump_player_stats(out, &stats);
     fputs(",\n", out);
@@ -472,9 +469,9 @@ int main(int argc, char **argv)
 
     fputs("{\n", out);
     fprintf(out, "  \"schemaVersion\":1,\n");
-    fprintf(out, "  \"sizeof\":{\"T_playerStats\":%zu,\"T_inventoryItemStruct\":%zu},\n",
+    fprintf(out, "  \"sizeof\":{\"T_playerStats\":%zu,\"T_inventoryItemDiskStruct\":%zu},\n",
             sizeof(T_playerStats),
-            sizeof(T_inventoryItemStruct));
+            sizeof(T_inventoryItemDiskStruct));
     fputs("  \"characters\":[\n", out);
 
     for (i = 0; i < list.count; ++i) {

@@ -43,6 +43,7 @@
 #include "STATS.H"
 #include "SYNCMEM.H"
 #include "SYNCPACK.H"
+#include "ENDIAN_AA.H"
 #include "SYNCTIME.H"
 #include "TICKER.H"
 
@@ -252,6 +253,7 @@ T_void ClientSyncPacketEvaluate(T_syncronizePacket *p_sync)
     T_syncPacketStanceAndVis stanceAndVisibility ;
     T_playerAction actionType ;
     T_word16 *p_actionData ;
+    T_word16 actionDataAligned[4] ;
     T_byte8 *p_pos ;
     E_Boolean isPlayer ;
     T_byte8 stance ;
@@ -339,28 +341,34 @@ T_void ClientSyncPacketEvaluate(T_syncronizePacket *p_sync)
         /* Break apart the packet. */
         fieldsAvailable = p_sync->fieldsAvailable ;
 
+        /* p_pos walks the packet byte-by-byte across a variable set of
+           optional fields (per fieldsAvailable), so it may not land on a
+           2-byte-aligned address even before considering the struct's own
+           layout -- a direct T_sword16 or T_word16 pointer dereference
+           here faults with SIGBUS on strict-alignment targets (e.g. the
+           SGI O2/MIPS port). memcpy is alignment-agnostic. */
         p_pos = (T_byte8 *)(&p_sync->x) ;
         if (fieldsAvailable & SYNC_PACKET_FIELD_AVAIL_X)  {
-            x = *((T_sword16 *)p_pos) ;
+            memcpy(&x, p_pos, sizeof(x)) ;
 //printf("Found x = %d\n", x) ;
             p_pos += sizeof(T_sword16) ;
             ObjectSetX16(p_playerObj, x) ;
         }
 
         if (fieldsAvailable & SYNC_PACKET_FIELD_AVAIL_Y)  {
-            y = *((T_sword16 *)p_pos) ;
+            memcpy(&y, p_pos, sizeof(y)) ;
             p_pos += sizeof(T_sword16) ;
             ObjectSetY16(p_playerObj, y) ;
         }
 
         if (fieldsAvailable & SYNC_PACKET_FIELD_AVAIL_Z)  {
-            z = *((T_sword16 *)p_pos) ;
+            memcpy(&z, p_pos, sizeof(z)) ;
             p_pos += sizeof(T_sword16) ;
             ObjectSetZ16(p_playerObj, z) ;
         }
 
         if (fieldsAvailable & SYNC_PACKET_FIELD_ANGLE)  {
-            angle = *((T_word16 *)p_pos) ;
+            memcpy(&angle, p_pos, sizeof(angle)) ;
             p_pos += sizeof(T_word16) ;
 
             /* Only set the angle if not in dead stance */
@@ -483,7 +491,15 @@ T_void ClientSyncPacketEvaluate(T_syncronizePacket *p_sync)
         if (fieldsAvailable & SYNC_PACKET_FIELD_ACTION)  {
             actionType = *((T_playerAction *)p_pos) ;
             p_pos += sizeof(T_playerAction) ;
-            p_actionData = (T_word16 *)p_pos ;
+            /* p_pos is at an odd byte offset here (just advanced past a
+               1-byte T_playerAction), so a T_word16* cast directly onto
+               it is misaligned for every subsequent p_actionData[i]
+               access -- copy the 8 bytes into a properly-aligned local
+               array instead of pointing straight into the packet buffer
+               (faults with SIGBUS on strict-alignment targets, e.g. the
+               SGI O2/MIPS port). */
+            memcpy(actionDataAligned, p_pos, sizeof(actionDataAligned)) ;
+            p_actionData = actionDataAligned ;
             p_pos += 8 ;
             IClientSyncDoPlayerAction(
                 p_playerObj,
@@ -1258,6 +1274,22 @@ T_void ClientSyncSendActionAbortLevel(T_void)
     DebugEnd() ;
 }
 
+/* Sync packets are sent via PacketSend() directly (bypassing CmdQ's
+   queue, for latency -- see CmdQSwapPacketPayload's comment in
+   CMDQUEUE.H), so unlike CmdQ-routed packets they get no automatic
+   payload byte-order fixup.  Send through a throwaway swapped copy
+   here so `packet`/G_lastPacket/the packet history all stay host-native
+   for local re-use (self-delivery via ClientSyncPacketProcess, retransmit
+   history replay, resending G_lastPacket, etc). */
+static T_void ISyncSendPacket(T_packetLong *p_packet)
+{
+    T_packetLong wireCopy ;
+
+    wireCopy = *p_packet ;
+    CmdQSwapPacketPayload(wireCopy.data) ;
+    PacketSend((T_packetEitherShortOrLong *)(&wireCopy)) ;
+}
+
 T_void ClientSyncUpdate(T_void)
 {
     T_doubleLinkListElement element ;
@@ -1312,7 +1344,7 @@ T_void ClientSyncUpdate(T_void)
                 if ((ObjectGetServerId(PlayerGetObject())-9000) != i)  {
                     if (G_playerLeft[i] == FALSE)  {
                         DirectTalkSetDestination(PeopleHereGetUniqueAddr(i)) ;
-                        PacketSend((T_packetEitherShortOrLong *)(&packet)) ;
+                        ISyncSendPacket(&packet) ;
                     }
                 }
             }
@@ -1431,7 +1463,7 @@ T_void ClientSyncUpdate(T_void)
                         if (G_playerLeft[i] == FALSE)  {
     //printf("  to %d\n", i) ;
                             DirectTalkSetDestination(PeopleHereGetUniqueAddr(i)) ;
-                            PacketSend((T_packetEitherShortOrLong *)(&packet)) ;
+                            ISyncSendPacket(&packet) ;
                         }
                     }
                 }
@@ -1720,8 +1752,7 @@ T_void ClientSyncReceiveRetransmitPacket(
                     DirectTalkSetDestination(
                         PeopleHereGetUniqueAddr(
                             p_retrans->fromPlayer)) ;
-                    PacketSend((T_packetEitherShortOrLong *)
-                        DoubleLinkListElementGetData(element)) ;
+                    ISyncSendPacket(p_packetHistory) ;
                     element = DoubleLinkListElementGetNext(element) ;
                 }
             } else {
@@ -1970,12 +2001,21 @@ T_void ClientSyncSendIdSelf(T_byte8 *p_name)
     len = strlen(buffer) ;
     p_name = buffer ;
     for (i=0; i<len; i+=7, p_name+=7)  {
-        /* Send out 7 characters at a time, with a null at the end. */
+        /* Send out 7 characters at a time, with a null at the end.
+           p_name advances by 7 (odd) each time, so its alignment relative
+           to buffer[] drifts every iteration -- a direct T_word16* cast
+           is misaligned on most of them (faults with SIGBUS on strict-
+           alignment targets, e.g. the SGI O2/MIPS port). memcpy is
+           alignment-agnostic. */
+        T_word16 chunk0, chunk1, chunk2 ;
+        memcpy(&chunk0, p_name + 0, sizeof(chunk0)) ;
+        memcpy(&chunk1, p_name + 2, sizeof(chunk1)) ;
+        memcpy(&chunk2, p_name + 4, sizeof(chunk2)) ;
         IClientSyncSendAction(
             PLAYER_ACTION_ID_SELF,
-            *((T_word16 *)(p_name + 0)),
-            *((T_word16 *)(p_name + 2)),
-            *((T_word16 *)(p_name + 4)),
+            chunk0,
+            chunk1,
+            chunk2,
             *((T_byte8 *)(p_name + 6))) ;
     }
 

@@ -10,6 +10,8 @@
 #include "OBJTYPE.H"
 #include "RESOURCE.H"
 #include "SCRIPT.H"
+#include "GENERAL.H"
+#include "ENDIAN_AA.H"
 
 #define MAX_OBJECT_SECTORS 20
 
@@ -111,6 +113,24 @@ typedef struct {
 #else
 #define TX_PTR_FIELD(txField) ((T_byte8 **)(&(txField)[1]))
 #endif
+
+/* TX_PTR_FIELD reinterprets bytes inside a texture-name array (part of
+   a packed on-disk struct, T_3dSide/T_3dSector -- see below) as a
+   T_byte8* used purely at runtime to cache a locked picture pointer;
+   it's never written back to disk. Since sizeof(T_3dSide)/sizeof(
+   T_3dSector) aren't multiples of 4 (30 and 26 bytes respectively),
+   every other array element's texture fields land at a non-4-aligned
+   address, so a raw `*TX_PTR_FIELD(x) = ptr` pointer store/load faults
+   with SIGBUS on strict-alignment targets (confirmed on the SGI O2/
+   MIPS port). TX_PTR_GET/TX_PTR_SET route the pointer's bytes through
+   AlignedGetW32/AlignedSetW32 (see ENDIAN_AA.H) instead of a direct
+   dereference -- pointers are 4 bytes on every ABI this codebase
+   targets (Win32, Mac PPC32, MIPS N32), matching T_word32. Use these
+   in place of `*TX_PTR_FIELD(...)` everywhere. */
+#define TX_PTR_GET(txField) \
+    ((T_byte8 *)(T_uintptr_t)AlignedGetW32(TX_PTR_FIELD(txField)))
+#define TX_PTR_SET(txField, val) \
+    (AlignedSetW32(TX_PTR_FIELD(txField), (T_word32)(T_uintptr_t)(val)))
 
 /** Defines for light animation types. **/
 #define SECTOR_LIGHT_ANIM_NONE      0

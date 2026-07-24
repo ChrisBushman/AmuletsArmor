@@ -21,8 +21,19 @@
 #include "RESOURCE.H"
 #include "3D_VIEW.H"
 
-#define LIGHT_TAG            (*((T_word32 *)"LiT"))
-#define LIGHT_DEAD_TAG       (*((T_word32 *)"DlI"))
+/* Composed as a compile-time constant rather than a string-literal cast:
+   string literals aren't guaranteed 4-byte aligned, and a raw T_word32*
+   dereference of one faults with SIGBUS on strict-alignment targets
+   (e.g. the SGI O2/MIPS port). Byte 4 is the implicit NUL terminator of
+   the original 3-character literal, preserved here for an exact match. */
+#define LIGHT_TAG            ((T_word32)('L' << 0) | \
+                                         ('i' << 8) | \
+                                         ('T' << 16) | \
+                                         (0   << 24))
+#define LIGHT_DEAD_TAG       ((T_word32)('D' << 0) | \
+                                         ('l' << 8) | \
+                                         ('I' << 16) | \
+                                         (0   << 24))
 
 typedef struct {
     T_word32 tag ;

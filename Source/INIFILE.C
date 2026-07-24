@@ -15,8 +15,18 @@
 #include "MEMORY.H"
 #include <ctype.h>
 
-#define INIFILE_TAG               (*((T_word32 *)"iNiF"))
-#define INIFILE_DEAD_TAG          (*((T_word32 *)"DinI"))
+/* Composed as a compile-time constant rather than a string-literal cast:
+   string literals aren't guaranteed 4-byte aligned, and a raw T_word32*
+   dereference of one faults with SIGBUS on strict-alignment targets
+   (e.g. the SGI O2/MIPS port). */
+#define INIFILE_TAG               ((T_word32)('i' << 0) | \
+                                              ('N' << 8) | \
+                                              ('i' << 16) | \
+                                              ('F' << 24))
+#define INIFILE_DEAD_TAG          ((T_word32)('D' << 0) | \
+                                              ('i' << 8) | \
+                                              ('n' << 16) | \
+                                              ('I' << 24))
 
 typedef struct {
     T_byte8 key[32] ;

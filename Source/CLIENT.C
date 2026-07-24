@@ -784,7 +784,8 @@ T_void ClientHandleOverlay(
             PLAYER_EFFECT_INVISIBLE))?TRUE:FALSE) ;
 
     /* Draw the current weapon on the screen. */
-    OverlayDraw(left, top, right, bottom, -VIEW3D_CLIP_LEFT, 0) ;
+    OverlayDraw(left, top, right, bottom,
+                -(VIEW3D_CLIP_LEFT/VIEW3D_SCALE), 0) ;  /* logical offset */
     OverlayUpdate(ClientIsPaused()) ;
 
     /* Draw crosshairs */
@@ -908,20 +909,20 @@ for (i=0; i<n; i++)  {
     if (ClientIsPaused())  {
         if (SyncTimeGet() <= 1)  {
             if (ClientSyncGetNumberPlayers() > 1)  {
-                GrSetCursorPosition(5+((VIEW3D_CLIP_RIGHT-VIEW3D_CLIP_LEFT-100)>>1), 80) ;
+                GrSetCursorPosition(5+(((VIEW3D_CLIP_RIGHT-VIEW3D_CLIP_LEFT)/VIEW3D_SCALE-100)>>1), 80) ;
                 GrDrawShadowedText("WAITING FOR OTHER PLAYERS", COLOR_WHITE, COLOR_BLACK) ;
             }
         } else {
-            GrSetCursorPosition(5+((VIEW3D_CLIP_RIGHT-VIEW3D_CLIP_LEFT-50)>>1), 80) ;
+            GrSetCursorPosition(5+(((VIEW3D_CLIP_RIGHT-VIEW3D_CLIP_LEFT)/VIEW3D_SCALE-50)>>1), 80) ;
             GrDrawShadowedText("GAME PAUSED", COLOR_WHITE, COLOR_BLACK) ;
         }
     }
     if (BannerFormIsOpen(BANNER_FORM_COMMUNICATE))  {
-        GrSetCursorPosition(5+((VIEW3D_CLIP_RIGHT-VIEW3D_CLIP_LEFT-144)>>1), 90) ;
+        GrSetCursorPosition(5+(((VIEW3D_CLIP_RIGHT-VIEW3D_CLIP_LEFT)/VIEW3D_SCALE-144)>>1), 90) ;
         GrDrawShadowedText("MOVEMENT BLOCKED WHILE COMMUNICATING", COLOR_WHITE, COLOR_BLACK) ;
     }
     if (BannerFormIsOpen(BANNER_FORM_NOTES))  {
-        GrSetCursorPosition(5+((VIEW3D_CLIP_RIGHT-VIEW3D_CLIP_LEFT-140)>>1), 90) ;
+        GrSetCursorPosition(5+(((VIEW3D_CLIP_RIGHT-VIEW3D_CLIP_LEFT)/VIEW3D_SCALE-140)>>1), 90) ;
         GrDrawShadowedText("MOVEMENT BLOCKED WHILE MAKING NOTES", COLOR_WHITE, COLOR_BLACK) ;
     }
 

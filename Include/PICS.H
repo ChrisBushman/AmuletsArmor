@@ -18,6 +18,8 @@ T_byte8 *PictureLock(T_byte8 *name, T_resource *res) ;
 
 T_byte8 *PictureLockData(T_byte8 *name, T_resource *res) ;
 
+T_bitmap *PictureLockDataAsBitmap(T_byte8 *name, T_resource *res) ;
+
 T_void PictureUnlock(T_resource res) ;
 
 #define PictureUnlockData(res)  ResourceUnlock(res)

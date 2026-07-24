@@ -16,6 +16,13 @@ file(GLOB AA_CORE_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Source/
 list(REMOVE_ITEM AA_CORE_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/DEBUGBOR.C"
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/TOSDATA.C"
+    # DEPRECATED (see the file's own header comment); nothing else in the
+    # codebase calls or includes it. Its UIBUTTON.H's T_buttonHandler
+    # typedef genuinely conflicts with BUTTON.H's (different function
+    # pointer signature) once both land in the same translation unit --
+    # AppleClang tolerates the redefinition, other compilers (e.g. GCC on
+    # the PowerPC/Tiger build) correctly reject it.
+    "${CMAKE_CURRENT_SOURCE_DIR}/Source/UIBUTTON.C"
 )
 
 set(AA_PLATFORM_SOURCES
@@ -24,6 +31,16 @@ set(AA_PLATFORM_SOURCES
 )
 
 list(APPEND AA_PLATFORM_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source/Win32/ipx_client.cpp")
+
+if(APPLE)
+    # TRUE-HIGHRES: RESSCALE lives under Source/Win32 (with ipx_client.cpp)
+    # so it isn't picked up by the Source/*.C glob above; HIGHRES.C is
+    # directly under Source/ and is picked up automatically.
+    list(APPEND AA_PLATFORM_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source/Win32/RESSCALE.C")
+    set_source_files_properties(
+        "${CMAKE_CURRENT_SOURCE_DIR}/Source/Win32/RESSCALE.C"
+        PROPERTIES LANGUAGE C)
+endif()
 
 add_executable(${AA_EXE_NAME}
     ${AA_CORE_SOURCES}
@@ -69,6 +86,8 @@ target_compile_definitions(${AA_EXE_NAME}
         _cdecl=
         __cdecl=
         __fastcall=
+        SCREEN_WIDTH=320      # TRUE-HIGHRES: classic UI screen size,
+        SCREEN_HEIGHT=200     # needed by HIGHRES/RESSCALE main.c integration
 )
 
 target_compile_definitions(${AA_EXE_NAME} PRIVATE WIN_IPX=1)

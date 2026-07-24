@@ -13,6 +13,7 @@
  *
  *<!-----------------------------------------------------------------------*/
 #include "PACKET.H"
+#include "ENDIAN_AA.H"
 
 /* Option to create the file RECEIVE.DAT to record all received bytes */
 /* from the packet driver. */
@@ -61,6 +62,11 @@ T_sword16 PacketSendShort(T_packetShort *p_shortPacket)
     p_shortPacket->header.checksum =
         IPacketComputeChecksum((T_packetEitherShortOrLong *)p_shortPacket) ;
 
+    /* id/checksum are computed above as host-native values; swap to wire
+       (little-endian) byte order right before the bytes actually leave. */
+    p_shortPacket->header.id = EndianLE32(p_shortPacket->header.id) ;
+    p_shortPacket->header.checksum = EndianLE16(p_shortPacket->header.checksum) ;
+
     /* Actually send the data out the port. */
     DirectTalkSendData((T_byte8 *)p_shortPacket, sizeof(T_packetShort)) ;
     /* Note that the packet was sent. */
@@ -106,6 +112,11 @@ T_sword16 PacketSendLong(T_packetLong *p_longPacket)
     /* Compute the checksum for this packet. */
     p_longPacket->header.checksum =
         IPacketComputeChecksum((T_packetEitherShortOrLong *)p_longPacket) ;
+
+    /* id/checksum are computed above as host-native values; swap to wire
+       (little-endian) byte order right before the bytes actually leave. */
+    p_longPacket->header.id = EndianLE32(p_longPacket->header.id) ;
+    p_longPacket->header.checksum = EndianLE16(p_longPacket->header.checksum) ;
 
     /* See if there is room to send the packet. */
     /* Actually send the data out the port. */
@@ -153,6 +164,13 @@ T_sword16 PacketSendAnyLength(T_packetEitherShortOrLong *p_anyPacket)
 
     /* Compute the checksum for this packet. */
     p_anyPacket->header.checksum = IPacketComputeChecksum(p_anyPacket) ;
+
+    /* id/checksum are computed above as host-native values; swap to wire
+       (little-endian) byte order right before the bytes actually leave.
+       packetLength itself is a single byte, so reading it below is
+       unaffected by this swap. */
+    p_anyPacket->header.id = EndianLE32(p_anyPacket->header.id) ;
+    p_anyPacket->header.checksum = EndianLE16(p_anyPacket->header.checksum) ;
 
     /* See if there is room to send the packet. */
     /* Actually send the data out the port. */
@@ -334,6 +352,13 @@ T_void PacketReceiveData(T_void *p_data, T_word16 size)
 #endif
 
     memcpy(&newPacket, p_data, size) ;
+
+    /* Header id/checksum arrive in wire (little-endian) byte order; swap
+       back to host-native right away so everything downstream of
+       PacketGet() sees normal host-native values. */
+    newPacket.header.id = EndianLE32(newPacket.header.id) ;
+    newPacket.header.checksum = EndianLE16(newPacket.header.checksum) ;
+
     newPacketFilled = TRUE ;
     PacketPrint(p_data, size);
 

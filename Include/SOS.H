@@ -23,7 +23,7 @@
 #endif
 
 // include the defs file
-#include "sosdefs.h"
+#include "SOSDEFS.H"
 
 // macro for creating a left/right volume value for the mixer
 #define MK_VOLUME( l, r ) ( ( short )r << 16 | ( short )l )
@@ -664,7 +664,7 @@ typedef _SOS_TIMER_SYSTEM * PSOSTIMERSYSTEM;
 // restore the structure packing back to the default command line packing
 #pragma pack()
 
-#include "sosdata.h"
-#include "sosfnct.h"
+#include "SOSDATA.H"
+#include "SOSFNCT.H"
 
 #endif

@@ -396,9 +396,9 @@ static T_void ControlMouseControlForGame(
                             ControlSetDefaultPointer(CONTROL_MOUSE_POINTER_NOLOOK);
                         }
 
-                        G_lookOffset = x - 3 - VIEW3D_HALF_WIDTH + VIEW3D_CLIP_LEFT;
+                        G_lookOffset = ((x - 3)*VIEW3D_SCALE) - VIEW3D_HALF_WIDTH + VIEW3D_CLIP_LEFT;
                         G_lookAngle = (((VIEW3D_CLIP_RIGHT - VIEW3D_CLIP_LEFT + 1)
-                                / 2) - x) << 6;
+                                / (2*VIEW3D_SCALE)) - x) << 6;
                         /* check for a spell cast command *left+right buttons* */
                         if (button
                                 == 3&& G_resetNeeded==FALSE && HardFormIsOpen()==FALSE) {
@@ -427,9 +427,9 @@ static T_void ControlMouseControlForGame(
                         /* find boundaries of view area */
                         vx1 = VIEW3D_UPPER_LEFT_X;
                         vy1 = VIEW3D_UPPER_LEFT_Y;
-                        vx2 = VIEW3D_CLIP_RIGHT + VIEW3D_UPPER_LEFT_X
-                                - VIEW3D_CLIP_LEFT + 1;
-                        vy2 = VIEW3D_HEIGHT;
+                        vx2 = (VIEW3D_CLIP_RIGHT - VIEW3D_CLIP_LEFT)/VIEW3D_SCALE
+                                + VIEW3D_UPPER_LEFT_X + 1;
+                        vy2 = VIEW3D_HEIGHT/VIEW3D_SCALE;
 
                         vcx = ((vx2 - vx1) / 2);
                         vcy = ((vy2 - vy1) / 2);
@@ -442,18 +442,18 @@ static T_void ControlMouseControlForGame(
 
                         /* should move character here based on mouse position */
                         if ((dir >= 1) && (dir <= 3))
-                            PlayerTurnRight(((x - vcx) << 8) / (VIEW3D_WIDTH / 2));
+                            PlayerTurnRight(((x - vcx) << 8) / (VIEW3D_WIDTH / (2*VIEW3D_SCALE)));
                         if ((dir >= 5) && (dir <= 7))
-                            PlayerTurnLeft(((vcx - x) << 8) / (VIEW3D_WIDTH / 2));
+                            PlayerTurnLeft(((vcx - x) << 8) / (VIEW3D_WIDTH / (2*VIEW3D_SCALE)));
 
                         // Can move only when not dead
                         if (!ClientIsDead())  {
                             if ((dir == 0) || (dir == 1) || (dir == 7))
                                 PlayerMoveForward(
-                                        ((vcy - y) << 10) / (VIEW3D_HEIGHT / 2));
+                                        ((vcy - y) << 10) / (VIEW3D_HEIGHT / (2*VIEW3D_SCALE)));
                             if ((dir >= 3) && (dir <= 5))
                                 PlayerMoveBackward(
-                                        ((y - vcy) << 10) / (VIEW3D_HEIGHT / 2));
+                                        ((y - vcy) << 10) / (VIEW3D_HEIGHT / (2*VIEW3D_SCALE)));
                         }
 
                         if (button == 3) {
@@ -665,8 +665,8 @@ static T_word16 ControlSetMovePointer(T_word16 mx, T_word16 my)
     /* get screen boundaries */
     vx1 = VIEW3D_UPPER_LEFT_X;
     vy1 = VIEW3D_UPPER_LEFT_Y;
-    vx2 = VIEW3D_CLIP_RIGHT + VIEW3D_UPPER_LEFT_X - VIEW3D_CLIP_LEFT + 1;
-    vy2 = VIEW3D_HEIGHT;
+    vx2 = (VIEW3D_CLIP_RIGHT - VIEW3D_CLIP_LEFT)/VIEW3D_SCALE + VIEW3D_UPPER_LEFT_X + 1;
+    vy2 = VIEW3D_HEIGHT/VIEW3D_SCALE;
 
     /* calulate x and y of the mouse after moving the origin to the */
     /* center of the view */

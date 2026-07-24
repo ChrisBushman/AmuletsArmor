@@ -15,6 +15,7 @@
 #define M_PI        3.14159265358979323846
 #include "3D_IO.H"
 #include "3D_TRIG.H"
+#include "ENDIAN_AA.H"
 #include "GRAPHICS.H"
 #include "OBJECT.H"
 #include "PLAYER.H"
@@ -26,6 +27,10 @@
 
 static T_word16 G_fromSector ;
 
+/* Per-column index into a compressed/rotated (.CPC) picture resource,
+   stored little-endian on disk right after the sizex/sizey header --
+   offset must be swapped at each read below (start/end are single bytes,
+   no swap needed). Same on-disk format as GRAPHICS.C's T_compressEntry. */
 typedef struct {
     T_word16 offset ;
     T_byte8 start ;
@@ -734,9 +739,16 @@ T_byte8 View3dOnRightByNodeWithXY(
 
 #define VIEW3D_CROSS_RATIO (65536 / VIEW3D_WIDTH)
 
+/* --- TRUE-HIGHRES (hybrid): see Include/HIGHRES.H --- */
+#include "HIGHRES.H"
+#define VIEW3D_ORIGIN_X 4
+#define VIEW3D_ORIGIN_Y 3
+static T_screen G_view3dOverlayScreen ;
+static E_Boolean G_view3dFrameDrawn = FALSE ;
+
 #define MAX_INTERSECTIONS 50
 //#define MAX_INTERSECTIONS 100
-#define MAX_WALL_RUNS     8000
+#define MAX_WALL_RUNS     (8000*VIEW3D_SCALE)
 //#define MAX_WALL_RUNS     16000
 #define MAX_FLOOR_INDEXES 40
 //#define MAX_FLOOR_INDEXES 100
@@ -884,7 +896,7 @@ static T_void IDrawWallSliceColumn(T_3dWallSlice *p_slice) ;
 /* ---------------- FLOOR INFO RELATED ------------------ */
 #define SECTOR_IS_WALL      0xFFFF
 #define SECTOR_IS_UNKNOWN   0x8000
-#define MAX_FLOOR_INFO      5000
+#define MAX_FLOOR_INFO      (5000*VIEW3D_SCALE)
 #define NEXT_IS_NONE        0
 #define SECTOR_NONE         0xFFFF
 
@@ -935,7 +947,7 @@ T_3dObjectRun G_objectRun[MAX_OBJECTS] ;
 /* 0xFFFF means no objects in that column. */
 T_word16 G_objectColStart[MAX_VIEW3D_WIDTH] ;
 T_word16 G_allocatedColRun = 0 ;
-#define MAX_OBJECT_COLUMN_RUNS  8000
+#define MAX_OBJECT_COLUMN_RUNS  (8000*VIEW3D_SCALE)
 T_3dObjectColRun G_objectColRunList[MAX_OBJECT_COLUMN_RUNS] ;
 
 T_word16 G_screenObjectPosition[MAX_VIEW3D_WIDTH] ;
@@ -1478,6 +1490,12 @@ INDICATOR_LIGHT(114, INDICATOR_GREEN) ;
 //memset(P_doubleBuffer, flippy^=15, VIEW3D_HEIGHT*MAX_VIEW3D_WIDTH) ;
     memset(G_numWallSlices, 0, sizeof(G_numWallSlices)) ;
 
+    /* TRUE-HIGHRES: 2D drawn over the view goes to a parallel overlay  */
+    /* screen (color 0 = transparent), composited above the native view */
+    memset((void *)G_view3dOverlayScreen, 0, 320*200) ;
+    GrScreenSet((T_screen)(((T_byte8 *)G_view3dOverlayScreen)
+                           + (VIEW3D_ORIGIN_Y*320) + VIEW3D_ORIGIN_X)) ;
+
     for (i=0; i<MAX_VIEW3D_WIDTH; i++)
         G_maxY[i] = VIEW3D_HEIGHT ;
 
@@ -1508,16 +1526,22 @@ INDICATOR_LIGHT(114, INDICATOR_GREEN) ;
         IDrawObjectAndWallRuns() ;
         INDICATOR_LIGHT(130, INDICATOR_RED) ;
     } else {
-        GrDrawRectangle(4+0, 3+0, 4+VIEW3D_WIDTH-1, 3+VIEW3D_HEIGHT-1, 15) ;
+        GrDrawRectangle(0, 0, (VIEW3D_WIDTH/VIEW3D_SCALE)-1,
+                        (VIEW3D_HEIGHT/VIEW3D_SCALE)-1, 15) ;
     }
 
-    GrScreenSet((T_screen)P_doubleBuffer) ;
+    HighResExtractViewTo320((unsigned char *)GRAPHICS_ACTUAL_SCREEN) ;
+    G_view3dFrameDrawn = TRUE ;
+    /* NOTE: the overlay screen stays active here ON PURPOSE -- the      */
+    /* view-phase overlay content (weapon, status text, crosshairs)      */
+    /* drawn by ClientHandleOverlay must land on the overlay layer.      */
+    /* ViewDraw restores the classic screen when the whole phase ends.   */
 
     GrInvalidateRect(
         0,
         0,
-        VIEW3D_WIDTH+4,
-        VIEW3D_HEIGHT+4) ;
+        (VIEW3D_WIDTH/VIEW3D_SCALE)+4,
+        (VIEW3D_HEIGHT/VIEW3D_SCALE)+4) ;
 
     DebugEnd() ;
     INDICATOR_LIGHT(42, INDICATOR_RED) ;
@@ -1730,8 +1754,8 @@ INDICATOR_LIGHT(148, INDICATOR_GREEN) ;
     G_3dFloorHeight = p_sector->floorHt ;
     G_3dCeilingHeight = p_sector->ceilingHt ;
     G_wall.shadeIndex = (p_sector->light>>2) ;
-    G_wall.textureFloor = *TX_PTR_FIELD(p_sector->floorTx) ;
-    G_wall.textureCeiling = *TX_PTR_FIELD(p_sector->ceilingTx) ;
+    G_wall.textureFloor = TX_PTR_GET(p_sector->floorTx) ;
+    G_wall.textureCeiling = TX_PTR_GET(p_sector->ceilingTx) ;
 //PictureCheck(G_wall.textureFloor) ;
 //PictureCheck(G_wall.textureCeiling) ;
 INDICATOR_LIGHT(148, INDICATOR_RED) ;
@@ -2341,7 +2365,7 @@ T_void IAddMainWall(T_void)
     DebugRoutine("IAddMainWall") ;
 
 ITestMinMax(1002) ;
-    G_wall.p_texture = *TX_PTR_FIELD(P_sideFront->mainTx) ;
+    G_wall.p_texture = TX_PTR_GET(P_sideFront->mainTx) ;
 //PictureCheck(G_wall.p_texture) ;
     DebugCheck(G_wall.p_texture != NULL) ;
 
@@ -2441,7 +2465,7 @@ ITestMinMax(1003) ;
             }
         } else {
 #endif
-            G_wall.p_texture = *TX_PTR_FIELD(P_sideFront->lowerTx) ;
+            G_wall.p_texture = TX_PTR_GET(P_sideFront->lowerTx) ;
 //PictureCheck(G_wall.p_texture) ;
             DebugCheck(G_wall.p_texture != NULL) ;
 //            G_relativeTop = G_eyeLevel -
@@ -2552,7 +2576,7 @@ ITestMinMax(1004) ;
             }
         } else {
 #endif
-            G_wall.p_texture = *TX_PTR_FIELD(P_sideFront->upperTx) ;
+            G_wall.p_texture = TX_PTR_GET(P_sideFront->upperTx) ;
 //PictureCheck(G_wall.p_texture) ;
             DebugCheck(G_wall.p_texture != NULL) ;
 //            G_relativeBottom = G_eyeLevel -
@@ -3438,7 +3462,7 @@ T_void IDrawColumn(
 
 //    p_pixel = &P_doubleBuffer[((top << 6) + (top << 8)) + x] ;
     p_pixel = G_doublePtrLookup[top] + x ;
-    for (y=top; y<bottom; y++, p_pixel += 320)
+    for (y=top; y<bottom; y++, p_pixel += MAX_VIEW3D_WIDTH)
         *p_pixel = color ;
 }
 
@@ -4038,7 +4062,7 @@ T_byte8 c ;
     G_objColumnStart = p_entry->start ;
     G_objColumnEnd = p_entry->end ;
 //printf("column: %d  x: %d  start: %d  end: %d\n", p_run->column, x, G_objColumnStart, G_objColumnEnd) ;
-    p_texture = &p_runInfo->p_picture[p_entry->offset-p_entry->start-4] ;
+    p_texture = &p_runInfo->p_picture[EndianLE16(p_entry->offset)-p_entry->start-4] ;
     line = 0 ;
     top = p_runInfo->top ;
     bottom = p_runInfo->bottom ;
@@ -4090,13 +4114,13 @@ c = *((T_byte8 *)G_colorizedObject) ;
 
 DebugCheck(bottom >= 0) ;
 DebugCheck(top >= 0) ;
-DebugCheck(bottom < 200) ;
-DebugCheck(top < 200) ;
-DebugCheck(x < 320) ;
+DebugCheck(bottom < MAX_VIEW3D_HEIGHT) ;
+DebugCheck(top < MAX_VIEW3D_HEIGHT) ;
+DebugCheck(x < MAX_VIEW3D_WIDTH) ;
 DebugCheck(bottom > top) ;
 DebugCheck(p_shade != NULL) ;
 DebugCheck(p_pixel != NULL) ;
-DebugCheck(((T_word32)p_pixel) < (((T_word32)P_doubleBuffer)+64000)) ;
+DebugCheck(((T_word32)p_pixel) < (((T_word32)P_doubleBuffer)+((T_word32)MAX_VIEW3D_WIDTH*MAX_VIEW3D_HEIGHT))) ;
 DebugCheck(((T_word32)p_pixel) >= ((T_word32)P_doubleBuffer)) ;
 
             if (ObjectGetAttributes(p_run->p_runInfo->p_obj) &
@@ -4325,6 +4349,9 @@ T_void View3dSetSize(T_word16 width, T_word16 height)
     VIEW3D_CLIP_LEFT = 0 ;
     VIEW3D_CLIP_RIGHT = VIEW3D_WIDTH ;
 
+    HighResSetViewWindow(VIEW3D_ORIGIN_X, VIEW3D_ORIGIN_Y,
+                         width/VIEW3D_SCALE, height/VIEW3D_SCALE) ;
+
     for (p_where=P_doubleBuffer, i=0;
          i<MAX_VIEW3D_HEIGHT;
          i++, p_where+=MAX_VIEW3D_WIDTH)  {
@@ -4368,6 +4395,17 @@ T_void View3dClipCenter(T_word16 centerWidth)
 
     VIEW3D_CLIP_LEFT = ((VIEW3D_WIDTH - centerWidth)>>1) ;
     VIEW3D_CLIP_RIGHT = VIEW3D_CLIP_LEFT + centerWidth ;
+
+    /* TRUE-HIGHRES: the compositor window must track the clip, or the   */
+    /* native frame keeps painting over UI panels beside the view.       */
+    /* Note: the renderer LEFT-ALIGNS clipped content in the buffer      */
+    /* (the -CLIP_LEFT in the pointer lookup), so the window stays       */
+    /* anchored at the origin and only its width follows the clip.       */
+    HighResSetViewWindow(
+        VIEW3D_ORIGIN_X,
+        VIEW3D_ORIGIN_Y,
+        (VIEW3D_CLIP_RIGHT-VIEW3D_CLIP_LEFT)/VIEW3D_SCALE,
+        VIEW3D_HEIGHT/VIEW3D_SCALE) ;
 
     for (p_where=P_doubleBuffer, i=0;
          i<MAX_VIEW3D_HEIGHT;
@@ -4585,7 +4623,7 @@ DebugCheck(leftTop <= VIEW3D_HEIGHT) ;
 DebugCheck(leftBottom <= VIEW3D_HEIGHT) ;
                 for (y=leftTop; y<leftBottom; y++)  {
                     floor[y].right = x ;
-DebugCheck(y < 200) ;
+DebugCheck(y < MAX_VIEW3D_HEIGHT) ;
                     IDrawFloorRun(y, floor+y) ;
                 }
                 /* end this left strip. */
@@ -4601,7 +4639,7 @@ DebugCheck(y < 200) ;
                     /* are ending run. */
                     for (y=leftTop; (y<rightTop)&&(y<leftBottom); y++)  {
                         floor[y].right = x ;
-DebugCheck(y < 200) ;
+DebugCheck(y < MAX_VIEW3D_HEIGHT) ;
                         IDrawFloorRun(y, floor+y) ;
                     }
                     leftTop = y ;
@@ -4623,7 +4661,7 @@ DebugCheck(y < 200) ;
                         for (y=leftTop; (y<leftBottom) && (y<rightBottom); y++)  {
                             /* End the left. */
                             floor[y].right = x ;
-DebugCheck(y < 200) ;
+DebugCheck(y < MAX_VIEW3D_HEIGHT) ;
                             IDrawFloorRun(y, floor+y) ;
 
                             /* Start the right. */
@@ -4695,7 +4733,7 @@ T_void IDrawFloorRun(T_word16 y, T_horzFloorInfo *p_floor)
         p_floor->left,
         p_floor->right) ;
 */
-    memset(P_doubleBuffer+y*320+p_floor->left, p_floor->sector, p_floor->right-p_floor->left) ;
+    memset(P_doubleBuffer+y*MAX_VIEW3D_WIDTH+p_floor->left, p_floor->sector, p_floor->right-p_floor->left) ;
 }
 #endif
 
@@ -4726,10 +4764,10 @@ DebugCheck(p_run->sector <= G_Num3dSectors) ;
 
     if (row >= VIEW3D_HALF_HEIGHT)  {
         /* Floor */
-        p_texture = *TX_PTR_FIELD(p_sector->floorTx) ;
+        p_texture = TX_PTR_GET(p_sector->floorTx) ;
     } else {
         /* Ceiling */
-        p_texture = *TX_PTR_FIELD(p_sector->ceilingTx) ;
+        p_texture = TX_PTR_GET(p_sector->ceilingTx) ;
     }
 
     /* Missing textures render as transparent */
@@ -4760,8 +4798,8 @@ DebugCheck(p_texture != NULL) ;
         backdropRow = VIEW3D_HALF_HEIGHT-1 ;
     backdropOffset = backdropRow * (VIEW3D_WIDTH<<1) ;
 
-DebugCheck(row < 200) ;
-DebugCheck(start < 320) ;
+DebugCheck(row < MAX_VIEW3D_HEIGHT) ;
+DebugCheck(start < MAX_VIEW3D_WIDTH) ;
     p_pixel = G_doublePtrLookup[row] + start ;
 
     /* If sizeY = 0, then we must be drawing the sky. */
@@ -5311,7 +5349,15 @@ T_void View3dInitialize(T_void)
 ////    P_doubleBuffer = MemAlloc(MAX_VIEW3D_WIDTH * MAX_VIEW3D_HEIGHT) ;
 //    P_doubleBuffer = GRAPHICS_ACTUAL_SCREEN ;
 
-P_doubleBuffer = GRAPHICS_ACTUAL_SCREEN+3*320+4 ;
+if (HighResGetScale() != VIEW3D_SCALE)  {
+    if (!HighResInit(VIEW3D_SCALE))
+        DebugCheck(FALSE) ;
+}
+if (G_view3dOverlayScreen == NULL)
+    G_view3dOverlayScreen = GrScreenAlloc() ;
+P_doubleBuffer = ((T_byte8 *)HighResFrame())
+    + (VIEW3D_ORIGIN_Y*VIEW3D_SCALE)*HighResFrameStride()
+    + (VIEW3D_ORIGIN_X*VIEW3D_SCALE) ;
 
 //P_doubleBuffer = ((char *)0xA0000) ;
     /* Set up a lookup table that is a pointer to each of the lines */
@@ -6393,10 +6439,10 @@ T_word16 View3dGetObjectAtXY(
              * base (matching the rendering formula in IDrawObjectColumn, line 4041) and
              * then index directly by imageFromTop rather than imageFromTop-start. */
             p_texture = &p_runInfo->p_picture[
-                            p_entry->offset-p_entry->start-4] ;
+                            EndianLE16(p_entry->offset)-p_entry->start-4] ;
 #else
             p_texture = &p_runInfo->p_picture[
-                            p_entry->offset-p_entry->start] ;
+                            EndianLE16(p_entry->offset)-p_entry->start] ;
 #endif
             if ((imageFromTop >= p_entry->start) &&
                 (imageFromTop <= p_entry->end))  {
@@ -6975,7 +7021,7 @@ T_void DrawObjectColumnAsm(
         x = ((textureOffset>>16) & 0xFFFF);
         if (x >= G_objColumnStart)
             break;
-        p_pixel += 320;
+        p_pixel += MAX_VIEW3D_WIDTH;
         textureOffset += textureStep;
         count--;
     }
@@ -6986,7 +7032,7 @@ T_void DrawObjectColumnAsm(
         c = G_CurrentTexturePos[x];
         if (c)
             *p_pixel = p_shade[c];
-        p_pixel += 320;
+        p_pixel += MAX_VIEW3D_WIDTH;
         textureOffset += textureStep;
         count--;
     }
@@ -7006,7 +7052,7 @@ T_void DrawTranslucentObjectColumnAsm(
         x = ((textureOffset>>16) & 0xFFFF);
         if (x >= G_objColumnStart)
             break;
-        p_pixel += 320;
+        p_pixel += MAX_VIEW3D_WIDTH;
         textureOffset += textureStep;
         count--;
     }
@@ -7017,7 +7063,7 @@ T_void DrawTranslucentObjectColumnAsm(
         c = G_CurrentTexturePos[x];
         if (c)
             *p_pixel = G_translucentTable[p_shade[c]][*p_pixel];
-        p_pixel += 320;
+        p_pixel += MAX_VIEW3D_WIDTH;
         textureOffset += textureStep;
         count--;
     }
@@ -7034,7 +7080,7 @@ T_void DrawTextureColumnAsm1(
     c = p_shade[G_CurrentTexturePos[0]];
     while (count--) {
         *p_pixel = c;
-        p_pixel += 320;
+        p_pixel += MAX_VIEW3D_WIDTH;
     }
 }
 
@@ -7047,7 +7093,7 @@ T_void DrawTextureColumnAsm2(
 {
     while (count--) {
         *p_pixel = p_shade[G_CurrentTexturePos[(textureOffset>>16)&0x01]];
-        p_pixel += 320;
+        p_pixel += MAX_VIEW3D_WIDTH;
         textureOffset += textureStep;
     }
 }
@@ -7061,7 +7107,7 @@ T_void DrawTextureColumnAsm4(
 {
     while (count--) {
         *p_pixel = p_shade[G_CurrentTexturePos[(textureOffset>>16)&0x03]];
-        p_pixel += 320;
+        p_pixel += MAX_VIEW3D_WIDTH;
         textureOffset += textureStep;
     }
 }
@@ -7075,7 +7121,7 @@ T_void DrawTextureColumnAsm8(
 {
     while (count--) {
         *p_pixel = p_shade[G_CurrentTexturePos[(textureOffset>>16)&0x07]];
-        p_pixel += 320;
+        p_pixel += MAX_VIEW3D_WIDTH;
         textureOffset += textureStep;
     }
 }
@@ -7089,7 +7135,7 @@ T_void DrawTextureColumnAsm16(
 {
     while (count--) {
         *p_pixel = p_shade[G_CurrentTexturePos[(textureOffset>>16)&0x0F]];
-        p_pixel += 320;
+        p_pixel += MAX_VIEW3D_WIDTH;
         textureOffset += textureStep;
     }
 }
@@ -7103,7 +7149,7 @@ T_void DrawTextureColumnAsm32(
 {
     while (count--) {
         *p_pixel = p_shade[G_CurrentTexturePos[(textureOffset>>16)&0x1F]];
-        p_pixel += 320;
+        p_pixel += MAX_VIEW3D_WIDTH;
         textureOffset += textureStep;
     }
 }
@@ -7117,7 +7163,7 @@ T_void DrawTextureColumnAsm64(
 {
     while (count--) {
         *p_pixel = p_shade[G_CurrentTexturePos[(textureOffset>>16)&0x3F]];
-        p_pixel += 320;
+        p_pixel += MAX_VIEW3D_WIDTH;
         textureOffset += textureStep;
     }
 }
@@ -7131,7 +7177,7 @@ T_void DrawTextureColumnAsm128(
 {
     while (count--) {
         *p_pixel = p_shade[G_CurrentTexturePos[(textureOffset>>16)&0x7F]];
-        p_pixel += 320;
+        p_pixel += MAX_VIEW3D_WIDTH;
         textureOffset += textureStep;
     }
 }
@@ -7145,7 +7191,7 @@ T_void DrawTextureColumnAsm256(
 {
     while (count--) {
         *p_pixel = p_shade[G_CurrentTexturePos[(textureOffset>>16)&0xFF]];
-        p_pixel += 320;
+        p_pixel += MAX_VIEW3D_WIDTH;
         textureOffset += textureStep;
     }
 }
@@ -7163,7 +7209,7 @@ T_void DrawTransparentColumnAsm1(
         c = p_shade[c];
         while (count--) {
             *(p_pixel) = c;
-            p_pixel+=320;
+            p_pixel += MAX_VIEW3D_WIDTH;
             textureOffset += textureStep;
         }
     }
@@ -7182,7 +7228,7 @@ T_void DrawTransparentColumnAsm2(
         c = G_CurrentTexturePos[(textureOffset>>16) & 0x01];
         if (c)
             *(p_pixel) = p_shade[c];
-        p_pixel+=320;
+        p_pixel += MAX_VIEW3D_WIDTH;
         textureOffset += textureStep;
     }
 }
@@ -7200,7 +7246,7 @@ T_void DrawTransparentColumnAsm4(
         c = G_CurrentTexturePos[(textureOffset>>16) & 0x03];
         if (c)
             *(p_pixel) = p_shade[c];
-        p_pixel+=320;
+        p_pixel += MAX_VIEW3D_WIDTH;
         textureOffset += textureStep;
     }
 }
@@ -7218,7 +7264,7 @@ T_void DrawTransparentColumnAsm8(
         c = G_CurrentTexturePos[(textureOffset>>16) & 0x07];
         if (c)
             *(p_pixel) = p_shade[c];
-        p_pixel+=320;
+        p_pixel += MAX_VIEW3D_WIDTH;
         textureOffset += textureStep;
     }
 }
@@ -7236,7 +7282,7 @@ T_void DrawTransparentColumnAsm16(
         c = G_CurrentTexturePos[(textureOffset>>16) & 0x0F];
         if (c)
             *(p_pixel) = p_shade[c];
-        p_pixel+=320;
+        p_pixel += MAX_VIEW3D_WIDTH;
         textureOffset += textureStep;
     }
 }
@@ -7254,7 +7300,7 @@ T_void DrawTransparentColumnAsm32(
         c = G_CurrentTexturePos[(textureOffset>>16) & 0x1F];
         if (c)
             *(p_pixel) = p_shade[c];
-        p_pixel+=320;
+        p_pixel += MAX_VIEW3D_WIDTH;
         textureOffset += textureStep;
     }
 }
@@ -7272,7 +7318,7 @@ T_void DrawTransparentColumnAsm64(
         c = G_CurrentTexturePos[(textureOffset>>16) & 0x3F];
         if (c)
             *(p_pixel) = p_shade[c];
-        p_pixel+=320;
+        p_pixel += MAX_VIEW3D_WIDTH;
         textureOffset += textureStep;
     }
 }
@@ -7290,7 +7336,7 @@ T_void DrawTransparentColumnAsm128(
         c = G_CurrentTexturePos[(textureOffset>>16) & 0x7F];
         if (c)
             *(p_pixel) = p_shade[c];
-        p_pixel+=320;
+        p_pixel += MAX_VIEW3D_WIDTH;
         textureOffset += textureStep;
     }
 }
@@ -7308,7 +7354,7 @@ T_void DrawTransparentColumnAsm256(
         c = G_CurrentTexturePos[(textureOffset>>16) & 0xFF];
         if (c)
             *(p_pixel) = p_shade[c];
-        p_pixel+=320;
+        p_pixel += MAX_VIEW3D_WIDTH;
         textureOffset += textureStep;
     }
 }
@@ -7326,7 +7372,7 @@ T_void DrawTranslucentColumnAsm1(
     if (c) {
         while (count--) {
             *p_pixel = G_translucentTable[c][*p_pixel];
-            p_pixel += 320;
+            p_pixel += MAX_VIEW3D_WIDTH;
             textureOffset += textureStep;
         }
     }
@@ -7345,7 +7391,7 @@ T_void DrawTranslucentColumnAsm2(
         c = G_CurrentTexturePos[(textureOffset >> 16) & 0x01];
         if (c)
             *p_pixel = G_translucentTable[c][*p_pixel];
-        p_pixel += 320;
+        p_pixel += MAX_VIEW3D_WIDTH;
         textureOffset += textureStep;
     }
 }
@@ -7363,7 +7409,7 @@ T_void DrawTranslucentColumnAsm4(
         c = G_CurrentTexturePos[(textureOffset >> 16) & 0x03];
         if (c)
             *p_pixel = G_translucentTable[c][*p_pixel];
-        p_pixel += 320;
+        p_pixel += MAX_VIEW3D_WIDTH;
         textureOffset += textureStep;
     }
 }
@@ -7381,7 +7427,7 @@ T_void DrawTranslucentColumnAsm8(
         c = G_CurrentTexturePos[(textureOffset >> 16) & 0x07];
         if (c)
             *p_pixel = G_translucentTable[c][*p_pixel];
-        p_pixel += 320;
+        p_pixel += MAX_VIEW3D_WIDTH;
         textureOffset += textureStep;
     }
 }
@@ -7399,7 +7445,7 @@ T_void DrawTranslucentColumnAsm16(
         c = G_CurrentTexturePos[(textureOffset >> 16) & 0x0F];
         if (c)
             *p_pixel = G_translucentTable[c][*p_pixel];
-        p_pixel += 320;
+        p_pixel += MAX_VIEW3D_WIDTH;
         textureOffset += textureStep;
     }
 }
@@ -7417,7 +7463,7 @@ T_void DrawTranslucentColumnAsm32(
         c = G_CurrentTexturePos[(textureOffset >> 16) & 0x1F];
         if (c)
             *p_pixel = G_translucentTable[c][*p_pixel];
-        p_pixel += 320;
+        p_pixel += MAX_VIEW3D_WIDTH;
         textureOffset += textureStep;
     }
 }
@@ -7435,7 +7481,7 @@ T_void DrawTranslucentColumnAsm64(
         c = G_CurrentTexturePos[(textureOffset >> 16) & 0x3F];
         if (c)
             *p_pixel = G_translucentTable[c][*p_pixel];
-        p_pixel += 320;
+        p_pixel += MAX_VIEW3D_WIDTH;
         textureOffset += textureStep;
     }
 }
@@ -7453,7 +7499,7 @@ T_void DrawTranslucentColumnAsm128(
         c = G_CurrentTexturePos[(textureOffset >> 16) & 0x7F];
         if (c)
             *p_pixel = G_translucentTable[c][*p_pixel];
-        p_pixel += 320;
+        p_pixel += MAX_VIEW3D_WIDTH;
         textureOffset += textureStep;
     }
 }
@@ -7471,7 +7517,7 @@ T_void DrawTranslucentColumnAsm256(
         c = G_CurrentTexturePos[(textureOffset >> 16) & 0xFF];
         if (c)
             *p_pixel = G_translucentTable[c][*p_pixel];
-        p_pixel += 320;
+        p_pixel += MAX_VIEW3D_WIDTH;
         textureOffset += textureStep;
     }
 }
@@ -7773,6 +7819,20 @@ T_void DrawTransRowAsm256(
     }
 }
 #endif
+
+T_screen View3dGetOverlayScreen(T_void)
+{
+    return G_view3dOverlayScreen ;
+}
+
+E_Boolean View3dHighResGrabFrameDrawn(T_void)
+{
+    E_Boolean flag ;
+
+    flag = G_view3dFrameDrawn ;
+    G_view3dFrameDrawn = FALSE ;
+    return flag ;
+}
 
 /** @} */
 /*-------------------------------------------------------------------------*

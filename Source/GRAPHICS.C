@@ -14,6 +14,7 @@
 #include "3D_TRIG.H"
 #include "DEBUG.H"
 #include "DBLLINK.H"
+#include "ENDIAN_AA.H"
 #include "GRAPHICS.H"
 #include "MEMORY.H"
 #include "MOUSEMOD.H"
@@ -2042,6 +2043,10 @@ T_void GrDoubleSizeTransfer(
  *  @param y_top -- Position of the top
  *
  *<!-----------------------------------------------------------------------*/
+/* Per-column index into a compressed/rotated (.CPC) bitmap resource,
+   stored little-endian on disk right after the sizex/sizey header --
+   offset must be swapped at each read below (start/end are single bytes,
+   no swap needed). */
 typedef struct {
     T_word16 offset ;
     T_byte8 start, end ;
@@ -2090,7 +2095,7 @@ T_void GrDrawCompressedBitmap(
     for (x=0; x<x_size; x++, p_entry++)  {
         if (p_entry->start != 255)  {
             /* Look up the bitmap entry. */
-            p_bitmapData = &(((T_byte8 *)p_bitmap)[p_entry->offset]) ;
+            p_bitmapData = &(((T_byte8 *)p_bitmap)[EndianLE16(p_entry->offset)]) ;
 
             /* Where on the screen does it go next? */
             y_start = y_top + p_entry->start ;
@@ -2193,7 +2198,7 @@ T_void GrDrawCompressedBitmapAndColor(
         for (x=0; x<x_size; x++, p_entry++)  {
             if (p_entry->start != 255)  {
                 /* Look up the bitmap entry. */
-                p_bitmapData = &(((T_byte8 *)p_bitmap)[p_entry->offset]) ;
+                p_bitmapData = &(((T_byte8 *)p_bitmap)[EndianLE16(p_entry->offset)]) ;
 
                 /* Where on the screen does it go next? */
                 y_start = y_top + p_entry->start ;
@@ -2293,7 +2298,7 @@ T_void GrDrawCompressedBitmapAndClip(
     for (; x<x_size; x++, p_entry++)  {
         if (p_entry->start != 255)  {
             /* Look up the bitmap entry. */
-            p_bitmapData = &(((T_byte8 *)p_bitmap)[p_entry->offset]) ;
+            p_bitmapData = &(((T_byte8 *)p_bitmap)[EndianLE16(p_entry->offset)]) ;
 
             /* Where on the screen does it go next? */
             y_start = y_top + p_entry->start ;
@@ -2400,7 +2405,7 @@ T_void GrDrawCompressedBitmapAndClipAndColor(
         for (; x<x_size; x++, p_entry++)  {
             if (p_entry->start != 255)  {
                 /* Look up the bitmap entry. */
-                p_bitmapData = &(((T_byte8 *)p_bitmap)[p_entry->offset]) ;
+                p_bitmapData = &(((T_byte8 *)p_bitmap)[EndianLE16(p_entry->offset)]) ;
 
                 /* Where on the screen does it go next? */
                 y_start = y_top + p_entry->start ;
@@ -2874,7 +2879,7 @@ T_void GrDrawCompressedBitmapAndClipAndColorAndCenterAndResize(
     for (x=0, p_entry=p_entries, xFract = 0; x<x_width; x++)  {
         if (p_entry->start != 255)  {
             /* Look up the bitmap entry. */
-            p_bitmapData = &(((T_byte8 *)p_bitmap)[p_entry->offset]) ;
+            p_bitmapData = &(((T_byte8 *)p_bitmap)[EndianLE16(p_entry->offset)]) ;
 
             /* Where on the screen does it go next? */
             y_start = y_top + ((((T_sword32)p_entry->start)<<16) / deltaY) ;

@@ -23,6 +23,7 @@
 #include "SOUNDS.H"
 #include "SPELLS.H"
 #include "STATS.H"
+#include "ENDIAN_AA.H"
 
 /* define if all spells available for any class */
 #define MANA_BACKCOLOR 225
@@ -35,6 +36,26 @@ static T_sword16 G_beaconY=0;
 static T_word16  G_facing=0;
 static E_Boolean G_clearSpells=FALSE;
 static E_Boolean G_isInit = FALSE ;
+
+/* T_spellStruct (SPELTYPE.H) is a raw little-endian struct dump.  Fix up
+   byte order in place, exactly once, right after a fresh load -- the
+   resource stays locked for the rest of the game (see G_spellsList
+   below), so later PictureLockDataQuick() calls on the same resource are
+   cache hits on already-fixed-up memory and must not be swapped again. */
+static T_void ISwapSpellStruct(T_spellStruct *p_spell)
+{
+    p_spell->type = EndianLE16(p_spell->type) ;
+    p_spell->subtype = EndianLE16(p_spell->subtype) ;
+    p_spell->duration = EndianLE16(p_spell->duration) ;
+    p_spell->durationmod = EndianLES16(p_spell->durationmod) ;
+    p_spell->power = EndianLE16(p_spell->power) ;
+    p_spell->powermod = EndianLES16(p_spell->powermod) ;
+    p_spell->cost = EndianLE16(p_spell->cost) ;
+    p_spell->costmod = EndianLES16(p_spell->costmod) ;
+    p_spell->sound = EndianLE16(p_spell->sound) ;
+    /* code[4]/hardness/hardnessmod/minlevel/system/filtr/filtg/filtb are
+       single bytes, no swap needed. */
+}
 
 /*-------------------------------------------------------------------------*
  * Routine:  SpellsInitSpells
@@ -53,6 +74,7 @@ T_void SpellsInitSpells (T_void)
     T_spellStruct *p_spell;
     E_spellsSpellSystemType system;
     E_Boolean unload=FALSE;
+    E_Boolean freshLoad;
 
 	DebugRoutine ("SpellsInitSpells");
     DebugCheck(G_isInit == FALSE) ;
@@ -72,7 +94,11 @@ T_void SpellsInitSpells (T_void)
     while (PictureExist(stmp))
     {
         /* lock in a new spell structure */
-        p_spell = (T_spellStruct *)PictureLockData (stmp,&res);
+        res = PictureFind(stmp) ;
+        freshLoad = (res != RESOURCE_BAD) ? ResourceIsFreshLoad(res) : FALSE ;
+        p_spell = (T_spellStruct *)PictureLockDataQuick(res) ;
+        if (freshLoad)
+            ISwapSpellStruct(p_spell) ;
 
         DebugCheck (p_spell != NULL);
 
@@ -303,7 +329,7 @@ T_void SpellsClearRunes (T_buttonID buttonID)
 
 	for (i=0;i<4;i++) G_curspell[i]=0;
 
-	pic = (T_bitmap *)PictureLockData("UI/3DUI/SPSTRIP", &res) ;
+	pic = PictureLockDataAsBitmap("UI/3DUI/SPSTRIP", &res) ;
 	DebugCheck(pic != NULL) ;
 
 	if (pic != NULL)
@@ -341,7 +367,7 @@ T_void SpellsBackspace (T_buttonID buttonID)
 
 	for (i=0;i<4;i++) G_curspell[i]=0;
 
-	pic = (T_bitmap *)PictureLockData("UI/3DUI/SPSTRIP", &res) ;
+	pic = PictureLockDataAsBitmap("UI/3DUI/SPSTRIP", &res) ;
 	DebugCheck(pic != NULL) ;
 
 	if (pic != NULL)
@@ -549,6 +575,7 @@ T_void SpellsCastSpell (T_buttonID buttonID)
     T_sword16 spelldif;
     T_byte8 charlevel;
 	T_word32 i;
+    E_Boolean freshLoad;
 
 	DebugRoutine ("SpellsCastSpell");
 
@@ -566,7 +593,10 @@ T_void SpellsCastSpell (T_buttonID buttonID)
         {
             /* get a pointer to this spell's spell struct */
             res = DoubleLinkListElementGetData(element);
+            freshLoad = ResourceIsFreshLoad(res) ;
             p_spell = (T_spellStruct *)PictureLockDataQuick (res);
+            if (freshLoad)
+                ISwapSpellStruct(p_spell) ;
             DebugCheck (p_spell != NULL);
 
             /* check to see if code matches */

@@ -15,15 +15,16 @@
 #include "MEMORY.H"
 #include "RESOURCE.H"
 #include "SOUND.H"
+#include "ENDIAN_AA.H"
 
-#include "keys.h"         // Include #define's for keyboard commands
+#include "KEYS.H"         // Include #define's for keyboard commands
 
 #ifdef USE_SOS_LIBRARY
-#include "sos.h"
-#include "sosm.h"
-#include "sosez.h"
-#include "profile.h"
-#include "sosfnct.h"
+#include "SOS.H"
+#include "SOSM.H"
+#include "SOSEZ.H"
+#include "PROFILE.H"
+#include "SOSFNCT.H"
 #endif
 
 #ifdef USE_SOS_LIBRARY
@@ -1428,6 +1429,20 @@ T_void SoundSetBackgroundMusic(T_byte8 *filename)
                 MemCheck(8204);
                 FileRead(file, G_backgroundMusic, length);
                 MemCheck(8205);
+
+                /* .MUS data is a raw little-endian 16-bit PCM stream
+                   (see the hardcoded is16Bit=TRUE below); fix up sample
+                   byte order in place or this plays back as noise.
+                   NOTE: `length` here is a byte count (it sizes both the
+                   MemAlloc and the FileRead above), so the sample count
+                   is length/sizeof(T_word16). */
+                {
+                    T_word32 sampleIdx, numSamples ;
+                    T_word16 *p_samples = (T_word16 *)G_backgroundMusic ;
+                    numSamples = length / sizeof(T_word16) ;
+                    for (sampleIdx = 0 ; sampleIdx < numSamples ; sampleIdx++)
+                        p_samples[sampleIdx] = EndianLE16(p_samples[sampleIdx]) ;
+                }
 
                 G_backgroundMusicID = IAllocateBufferDirect(G_backgroundMusic, length) ;
                 if (G_backgroundMusicID != BUFFER_ID_BAD)  {

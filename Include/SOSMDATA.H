@@ -18,7 +18,7 @@
 #ifndef  _SOS_MIDI_DATA_DEFINED   
 #define  _SOS_MIDI_DATA_DEFINED   
 
-#include "sosm.h"
+#include "SOSM.H"
 
 extern _MIDI_SYSTEM  _sMIDISystem;
 extern _MIDI_DRIVER  _sMIDIDriver[];

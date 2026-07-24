@@ -18,10 +18,70 @@
 #include "MEMORY.H"
 #include "SOUND.H"
 
+#ifdef TARGET_UNIX
+#include <dirent.h>
+#include <strings.h>
+#endif
+
 #define MAX_FILES 20
 
 /* Number of files currently open: */
 static T_word16 G_numberOpenFiles = 0 ;
+
+#ifdef TARGET_UNIX
+/* Every on-disk resource/asset filename in this codebase (SOUNDS.RES,
+   picture names, level files, ...) was authored assuming a case-
+   insensitive filesystem -- true of the original DOS/Windows target and
+   of Mac OS X's default HFS+/APFS, but not of IRIX's, so a request like
+   "sounds.res" fails outright when the real file is SOUNDS.RES. Rather
+   than fix each mismatched name as it's discovered (there's no reason to
+   expect this is the only one), fall back to a case-insensitive directory
+   scan whenever the exact-case open fails on a case-sensitive filesystem.
+   Read-only, deliberately: a case-insensitive fallback for
+   write/append/create would risk silently writing to an unrelated
+   existing file instead of the one actually requested. */
+static T_file IFileOpenCaseInsensitive(T_byte8 *p_filename, T_word32 openMode)
+{
+    char dirPart[512] ;
+    char pathCopy[512] ;
+    const char *baseFilename ;
+    char *lastSlash ;
+    DIR *dir ;
+    struct dirent *entry ;
+    char candidatePath[1024] ;
+    T_file file = FILE_BAD ;
+
+    strncpy(pathCopy, (char *)p_filename, sizeof(pathCopy)-1) ;
+    pathCopy[sizeof(pathCopy)-1] = 0 ;
+
+    lastSlash = strrchr(pathCopy, '/') ;
+    if (lastSlash != NULL)  {
+        *lastSlash = 0 ;
+        strncpy(dirPart, pathCopy, sizeof(dirPart)-1) ;
+        dirPart[sizeof(dirPart)-1] = 0 ;
+        baseFilename = lastSlash + 1 ;
+    } else {
+        strcpy(dirPart, ".") ;
+        baseFilename = (char *)p_filename ;
+    }
+
+    dir = opendir(dirPart) ;
+    if (dir == NULL)
+        return FILE_BAD ;
+
+    while ((entry = readdir(dir)) != NULL)  {
+        if (strcasecmp(entry->d_name, baseFilename) == 0)  {
+            snprintf(candidatePath, sizeof(candidatePath), "%s/%s",
+                     dirPart, entry->d_name) ;
+            file = open(candidatePath, openMode, S_IREAD|S_IWRITE) ;
+            break ;
+        }
+    }
+    closedir(dir) ;
+
+    return file ;
+}
+#endif
 
 /*-------------------------------------------------------------------------*
  * Routine:  FileOpen
@@ -61,6 +121,10 @@ T_file FileOpen(T_byte8 *p_filename, E_fileMode mode)
     DebugCheck(G_numberOpenFiles < MAX_FILES) ;
 
     file = open(p_filename, fileOpenModes[mode], S_IREAD|S_IWRITE) ;
+#ifdef TARGET_UNIX
+    if ((file == FILE_BAD) && (mode == FILE_MODE_READ))
+        file = IFileOpenCaseInsensitive(p_filename, fileOpenModes[mode]) ;
+#endif
     if (file != FILE_BAD)
         G_numberOpenFiles++ ;
 
@@ -264,7 +328,32 @@ printf("!A 1 file_r_%s\n", DebugGetCallerName()) ;
 T_word32 FileGetSize(T_byte8 *p_filename)
 {
     T_word32 size ;
-#if defined(WIN32)
+#if defined(TARGET_UNIX)
+    /* Not a raw fopen() here: FileExist()/FileOpen() both resolve a
+       case-mismatched name via IFileOpenCaseInsensitive on this
+       case-sensitive filesystem, but a bare fopen() (the WIN32 branch
+       below, which this codebase's -DWIN32=1 compatibility define also
+       takes on this Unix target) does not -- confirmed causing
+       FileExist() to report TRUE while FileGetSize() silently returned
+       0 for the exact same mismatched name, which then made FileLoad()
+       hand back a NULL buffer that was stored and only crashed much
+       later, in an unrelated-looking MemFree(NULL). Going through our
+       own FileOpen()/FileSeek()-equivalent keeps this in sync with
+       FileExist(). */
+    T_file file ;
+
+    DebugRoutine("FileGetSize") ;
+
+    file = FileOpen(p_filename, FILE_MODE_READ) ;
+    if (file != FILE_BAD)  {
+        size = (T_word32)lseek(file, 0, SEEK_END) ;
+        FileClose(file) ;
+    } else {
+        size = 0 ;
+    }
+
+    DebugEnd() ;
+#elif defined(WIN32)
     FILE *fp;
 
     DebugRoutine("FileGetSize");

@@ -13,6 +13,7 @@
  *
  *<!-----------------------------------------------------------------------*/
 #include "PICS.H"
+#include "ENDIAN_AA.H"
 
 #ifdef TARGET_UNIX
 #include <string.h>
@@ -154,6 +155,26 @@ typedef struct {
     T_void *ownerDir ;        /* Locked in owner directory (or NULL) */
 } T_resourceEntry ;
 
+/* Every T_bitmap-formatted picture resource starts with a little-endian
+   sizex/sizey T_word16 pair (see Include/GRAPHICS.H's T_bitmap and
+   PictureGetXYSize below).  ResourceIsFreshLoad() must be checked
+   *before* the ResourceLock() call, since ResourceLock() flips the
+   resource to "in memory" as a side effect of loading; the swap must
+   then be applied exactly once, to what ResourceLock() returns, or a
+   later cache-hit lock would flip an already-fixed-up header back to
+   wrong-endian. */
+static T_void IPictureSwapHeader(T_byte8 *where)
+{
+    /* where is a raw pointer into a resource file's in-memory image, with
+       no alignment guarantee (resource entries are packed back-to-back
+       exactly as they appear on disk) -- EndianLE16P goes through memcpy
+       rather than a direct T_word16* dereference so this doesn't fault on
+       strict-alignment targets (confirmed crashing here on the SGI O2/
+       MIPS port). */
+    EndianLE16P(where) ;                        /* sizex */
+    EndianLE16P(where + sizeof(T_word16)) ;      /* sizey */
+}
+
 T_byte8 *PictureLock(T_byte8 *name, T_resource *res)
 {
     T_resource found ;
@@ -186,8 +207,12 @@ T_byte8 *PictureLock(T_byte8 *name, T_resource *res)
 DebugCheck(found != RESOURCE_BAD) ;
 
     /* If we found it, we need to lock it in memory. */
-    if (found != RESOURCE_BAD)
+    if (found != RESOURCE_BAD)  {
+        E_Boolean freshLoad = ResourceIsFreshLoad(found) ;
         where = ResourceLock(found) ;
+        if (freshLoad)
+            IPictureSwapHeader(where) ;
+    }
 
     /* Record the resource we got the data from.  Needed for unlocking. */
     *res = found ;
@@ -253,6 +278,70 @@ DebugCheck(found != RESOURCE_BAD) ;
 
     /* Return a pointer to the data part. */
     return where ;
+}
+
+/*-------------------------------------------------------------------------*
+ * Routine:  PictureLockDataAsBitmap
+ *-------------------------------------------------------------------------*/
+/**
+ *  Same as PictureLockData, but for resources that are themselves a full
+ *  T_bitmap (sizex/sizey header + pixel data) rather than a pointer past
+ *  it (contrast with PictureLock/PictureToBitmap). Fixes up the
+ *  sizex/sizey header's byte order exactly once per resource, matching
+ *  PictureLock's own handling.
+ *
+ *  @param name -- Name of resource to load
+ *  @param res -- Pointer to resource to record where
+ *      the resource came from.  Is used
+ *      by PictureUnlock.
+ *
+ *  @return Pointer to bitmap data.
+ *
+ *<!-----------------------------------------------------------------------*/
+T_bitmap *PictureLockDataAsBitmap(T_byte8 *name, T_resource *res)
+{
+    T_resource found ;
+    T_byte8 *where = NULL ;
+    E_Boolean freshLoad ;
+
+    DebugRoutine("PictureLockDataAsBitmap") ;
+    DebugCheck(name != NULL) ;
+    DebugCheck(res != NULL) ;
+    DebugCheck(G_picturesActive == TRUE) ;
+
+    /* Same lookup as PictureLockData -- duplicated (rather than calling
+       PictureLockData and checking freshness after) because
+       ResourceIsFreshLoad() must be read before ResourceLock() mutates
+       the resource's state as a side effect of loading it. */
+#ifdef TARGET_UNIX
+    found = IPictureFindCompat(name) ;
+#else
+    found = ResourceFind(G_pictureResFile, name) ;
+#endif
+#ifndef NDEBUG
+    if (found == RESOURCE_BAD)  {
+#ifdef TARGET_UNIX
+        IPictureReportMissing(name) ;
+#else
+        printf("Cannot find picture named '%s'\n", name) ;
+#endif
+        found = ResourceFind(G_pictureResFile, "DRK42") ;
+    }
+#endif
+
+    DebugCheck(found != RESOURCE_BAD) ;
+    if (found != RESOURCE_BAD)  {
+        freshLoad = ResourceIsFreshLoad(found) ;
+        where = ResourceLock(found) ;
+        if (freshLoad)
+            IPictureSwapHeader(where) ;
+    }
+
+    *res = found ;
+
+    DebugEnd() ;
+
+    return (T_bitmap *)where ;
 }
 
 /*-------------------------------------------------------------------------*
@@ -342,9 +431,18 @@ T_void PictureGetXYSize(T_void *p_picture, T_word16 *sizeX, T_word16 *sizeY)
     /* Convert to 16 bit word pointer. */
     p_data = (T_word16 *)p_picture ;
 
-    /* Get data behind this point. */
-    *sizeX = p_data[-2] ;
-    *sizeY = p_data[-1] ;
+    /* Get data behind this point. IPictureSwapHeader already corrected
+       this header's byte order exactly once at load time, so it's
+       already native here -- no EndianLE16 (that would double-swap on
+       big-endian targets). AlignedGetW16 (ENDIAN_AA.H) rather than a
+       direct T_word16* dereference or memcpy: nothing guarantees
+       p_picture-4 is 2-byte-aligned, and both an unaligned dereference
+       and a small fixed-size memcpy have been confirmed to fault with
+       SIGBUS on strict-alignment targets (e.g. the SGI O2/MIPS port;
+       the latter because GCC 4.5.2 at -O2 pattern-matches a memcpy of
+       a fixed 2-byte size into a single plain `lh`). */
+    *sizeX = AlignedGetW16(p_data - 2) ;
+    *sizeY = AlignedGetW16(p_data - 1) ;
 
     DebugEnd() ;
 }
@@ -447,8 +545,12 @@ T_byte8 *PictureLockQuick(T_resource res)
     DebugCheck(res != RESOURCE_BAD) ;
 
     /* If we found it, we need to lock it in memory. */
-    if (res != RESOURCE_BAD)
+    if (res != RESOURCE_BAD)  {
+        E_Boolean freshLoad = ResourceIsFreshLoad(res) ;
         p_where = ResourceLock(res) ;
+        if (freshLoad)
+            IPictureSwapHeader(p_where) ;
+    }
 
     DebugEnd() ;
 
@@ -513,8 +615,11 @@ T_word16 PictureGetWidth(T_void *p_picture)
     /* Convert to 16 bit word pointer. */
     p_data = (T_word16 *)p_picture ;
 
-    /* Get data behind this point. */
-    width = p_data[-1] ;
+    /* Get data behind this point. Already native (see PictureGetXYSize);
+       AlignedGetW16 since p_data-1 isn't guaranteed 2-byte aligned (and
+       a memcpy of this fixed size isn't a safe substitute for a direct
+       dereference here either -- see PictureGetXYSize's comment). */
+    width = AlignedGetW16(p_data - 1) ;
 
     DebugEnd() ;
 
@@ -544,8 +649,11 @@ T_word16 PictureGetHeight(T_void *p_picture)
     /* Convert to 16 bit word pointer. */
     p_data = (T_word16 *)p_picture ;
 
-    /* Get data behind this point. */
-    height = p_data[-2] ;
+    /* Get data behind this point. Already native (see PictureGetXYSize);
+       AlignedGetW16 since p_data-2 isn't guaranteed 2-byte aligned (and
+       a memcpy of this fixed size isn't a safe substitute for a direct
+       dereference here either -- see PictureGetXYSize's comment). */
+    height = AlignedGetW16(p_data - 2) ;
 
     DebugEnd() ;
 
@@ -567,14 +675,22 @@ T_word16 PictureGetHeight(T_void *p_picture)
 T_void PicturePrint(FILE *fp, T_void *p_pic)
 {
     T_word16 *p_data ;
+    T_word16 width, height ;
 
     DebugRoutine("PicturePrint") ;
 
     p_data = p_pic ;
 
+    /* Already native (see PictureGetXYSize); AlignedGetW16 since
+       p_data-1/-2 aren't guaranteed 2-byte aligned (and a memcpy of
+       this fixed size isn't a safe substitute for a direct dereference
+       here either -- see PictureGetXYSize's comment). */
+    width = AlignedGetW16(p_data - 1) ;
+    height = AlignedGetW16(p_data - 2) ;
+
     fprintf(fp, "Picture: %p\n", p_pic) ;
-    fprintf(fp, "  width: %d\n", p_data[-1]) ;
-    fprintf(fp, "  heigh: %d\n", p_data[-2]) ;
+    fprintf(fp, "  width: %d\n", width) ;
+    fprintf(fp, "  heigh: %d\n", height) ;
     fflush(fp) ;
 
     DebugEnd() ;

@@ -7,6 +7,7 @@
 
 #include "GENERAL.H"
 #include "VIEWFILE.H"
+#include "GRAPHICS.H"   /* TRUE-HIGHRES: T_screen */
 
 /*
 #define VIEW3D_WIDTH 300
@@ -14,8 +15,11 @@
 #define VIEW3D_HALF_WIDTH (VIEW3D_WIDTH/2)
 #define VIEW3D_HALF_HEIGHT (VIEW3D_HEIGHT/2)
 */
-#define MAX_VIEW3D_WIDTH  320
-#define MAX_VIEW3D_HEIGHT 200
+#ifndef VIEW3D_SCALE
+#define VIEW3D_SCALE 2   /* 1 = classic 320x200, 2 = 640x400 hybrid */
+#endif
+#define MAX_VIEW3D_WIDTH  (320*VIEW3D_SCALE)
+#define MAX_VIEW3D_HEIGHT (200*VIEW3D_SCALE)
 
 #define VIEW3D_PASSABLE_BIT 0x1000
 
@@ -129,6 +133,10 @@ T_void View3dSetDarknessAdjustment(T_sbyte8 darkAdjust);
 T_void View3dRemapSectors(T_void);
 
 T_void View3dUnmapSectors(T_void);
+
+/* TRUE-HIGHRES additions */
+T_screen View3dGetOverlayScreen(T_void) ;
+E_Boolean View3dHighResGrabFrameDrawn(T_void) ;
 
 
 #endif

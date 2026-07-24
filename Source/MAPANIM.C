@@ -24,9 +24,20 @@
 #include "OBJECT.H"
 #include "PICS.H"
 #include "SYNCTIME.H"
+#include "ENDIAN_AA.H"
 
-#define MAP_ANIMATION_TAG         (*((T_word32 *)"MpAn"))
-#define MAP_ANIMATION_DEAD_TAG    (*((T_word32 *)"dMaN"))
+/* Composed as a compile-time constant rather than a string-literal cast:
+   string literals aren't guaranteed 4-byte aligned, and a raw T_word32*
+   dereference of one faults with SIGBUS on strict-alignment targets
+   (e.g. the SGI O2/MIPS port). */
+#define MAP_ANIMATION_TAG         ((T_word32)('M' << 0) | \
+                                              ('p' << 8) | \
+                                              ('A' << 16) | \
+                                              ('n' << 24))
+#define MAP_ANIMATION_DEAD_TAG    ((T_word32)('d' << 0) | \
+                                              ('M' << 8) | \
+                                              ('a' << 16) | \
+                                              ('N' << 24))
 
 /* Structure for the rather complex .ANI file. */
 typedef struct {
@@ -200,6 +211,85 @@ static T_void IInitAnimSectorForState(
 
 static T_void IMapAnimDoInitStates(T_mapAnimHeaderStruct *p_mapAnimHeader) ;
 
+/* map.ani is a raw little-endian struct dump; these fix up byte order in
+   place, once, right after the raw data is copied in. */
+/* EndianLE16P/EndianLES16P (memcpy-then-byte-composed) rather than a
+   direct `arr[i].field = EndianLE16(arr[i].field)` assignment -- see
+   the identical comment in 3D_IO.C's ISwap3d* functions: that exact
+   shape is what every alignment crash chased down this pass turned out
+   to trace back to, confirmed via disassembly of real SIGBUS core
+   dumps on the SGI O2/MIPS port, even for fields at provably-safe
+   offsets. */
+static T_void ISwapMapAnimWallStates(T_mapAnimWallState *p_states, T_word16 num)
+{
+    T_word16 i ;
+    for (i=0; i<num; i++)  {
+        EndianLE16P(&p_states[i].flags) ;
+        EndianLE16P(&p_states[i].activity) ;
+        EndianLE16P(&p_states[i].frontSideAnim) ;
+        EndianLE16P(&p_states[i].backSideAnim) ;
+        EndianLE16P(&p_states[i].damageAmount) ;
+        EndianLE16P(&p_states[i].damageType) ;
+        EndianLE16P(&p_states[i].duration) ;
+        EndianLE16P(&p_states[i].nextState) ;
+    }
+}
+
+static T_void ISwapMapAnimSideStates(T_mapAnimSideState *p_states, T_word16 num)
+{
+    T_word16 i ;
+    for (i=0; i<num; i++)  {
+        /* upperTexture/mainTexture/lowerTexture are byte arrays, no swap. */
+        EndianLE16P(&p_states[i].duration) ;
+        EndianLE16P(&p_states[i].nextState) ;
+        EndianLES16P(&p_states[i].xOffset) ;
+        EndianLES16P(&p_states[i].yOffset) ;
+        EndianLES16P(&p_states[i].xSpeed) ;
+        EndianLES16P(&p_states[i].ySpeed) ;
+    }
+}
+
+static T_void ISwapMapAnimSectorStates(T_mapAnimSectorState *p_states, T_word16 num)
+{
+    T_word16 i ;
+    for (i=0; i<num; i++)  {
+        /* textureFloor/textureCeiling are byte arrays, no swap. */
+        EndianLE16P(&p_states[i].flags) ;
+        EndianLES16P(&p_states[i].xOffset) ;
+        EndianLES16P(&p_states[i].yOffset) ;
+        EndianLES16P(&p_states[i].xSpeed) ;
+        EndianLES16P(&p_states[i].ySpeed) ;
+        EndianLES16P(&p_states[i].xVelAdd) ;
+        EndianLES16P(&p_states[i].yVelAdd) ;
+        EndianLES16P(&p_states[i].zVelAdd) ;
+        EndianLE16P(&p_states[i].gravity) ;
+        EndianLE16P(&p_states[i].nextMap) ;
+        EndianLE16P(&p_states[i].nextMapStart) ;
+        EndianLE16P(&p_states[i].lightType) ;
+        EndianLE16P(&p_states[i].lightRate) ;
+        EndianLE16P(&p_states[i].lightCenter) ;
+        EndianLE16P(&p_states[i].lightRadius) ;
+        EndianLE16P(&p_states[i].damage) ;
+        EndianLES16P(&p_states[i].floorHeight) ;
+        EndianLES16P(&p_states[i].ceilingHeight) ;
+        EndianLE16P(&p_states[i].enterSound) ;
+        EndianLE16P(&p_states[i].enterSoundRadius) ;
+        EndianLE16P(&p_states[i].areaSound) ;
+        EndianLE16P(&p_states[i].duration) ;
+        EndianLE16P(&p_states[i].nextState) ;
+    }
+}
+
+static T_void ISwapMapAnimInitStates(T_mapAnimInitState *p_states, T_word16 num)
+{
+    T_word16 i ;
+    for (i=0; i<num; i++)  {
+        /* initType is a single byte, no swap. */
+        EndianLE16P(&p_states[i].number) ;
+        EndianLE16P(&p_states[i].state) ;
+    }
+}
+
 /*-------------------------------------------------------------------------*
  * Routine:  MapAnimateLoad
  *-------------------------------------------------------------------------*/
@@ -284,10 +374,10 @@ T_mapAnimation MapAnimateLoad(T_word32 number)
             }
 
             memset(p_statesCopy, 0, sizeof(T_mapAnimStates) + rawSize) ;
-            p_statesCopy->numWallStates = p_statesDisk->numWallStates ;
-            p_statesCopy->numSideStates = p_statesDisk->numSideStates ;
-            p_statesCopy->numSectorStates = p_statesDisk->numSectorStates ;
-            p_statesCopy->numInitStates = p_statesDisk->numInitStates ;
+            p_statesCopy->numWallStates = EndianLE16(p_statesDisk->numWallStates) ;
+            p_statesCopy->numSideStates = EndianLE16(p_statesDisk->numSideStates) ;
+            p_statesCopy->numSectorStates = EndianLE16(p_statesDisk->numSectorStates) ;
+            p_statesCopy->numInitStates = EndianLE16(p_statesDisk->numInitStates) ;
             memcpy(p_statesCopy->p_rawData, p_statesDisk->p_rawData, rawSize) ;
 
             p_mapAnimHeader->p_states = p_statesCopy ;
@@ -352,6 +442,16 @@ T_mapAnimation MapAnimateLoad(T_word32 number)
 
             /* This is where the initialize states occur. */
             p_states->p_initStates = (T_mapAnimInitState *)p_data ;
+
+#ifdef TARGET_UNIX
+            /* The raw state arrays above are still little-endian bytes
+               copied straight out of map.ani -- fix them up in place now
+               that every array's location and count is known. */
+            ISwapMapAnimWallStates(p_states->p_wallStates, p_states->numWallStates) ;
+            ISwapMapAnimSideStates(p_states->p_sideStates, p_states->numSideStates) ;
+            ISwapMapAnimSectorStates(p_states->p_sectorStates, p_states->numSectorStates) ;
+            ISwapMapAnimInitStates(p_states->p_initStates, p_states->numInitStates) ;
+#endif
 
             IMapAnimDoInitStates(p_mapAnimHeader) ;
         }

@@ -77,11 +77,45 @@ static inline char *aa_itoa(int value, char *buffer, int base)
 #  define PACK
 #endif
 
+/* Per-field PACK (above) only removes *inter-field padding* -- it does not
+   lower the struct TYPE's own alignment, so the compiler still assumes a
+   pointer of this type is naturally aligned (e.g. 2 or 4 bytes) when
+   generating code, which is exactly wrong for array-indexed instances of
+   an odd-sized packed struct (each element's start address alternates
+   parity). Go through PACK_STRUCT (applied once, right before the
+   typedef'd name, after the closing brace) for any on-disk/on-wire struct
+   that is walked as an array or reached via variable byte-offset
+   arithmetic: __attribute__((aligned(1))) makes the compiler treat EVERY
+   pointer of that type as unaligned and emit unaligned-safe field
+   accesses, instead of memcpy'ing every field at every call site. This
+   is a no-op under MSVC (which achieves the on-disk packing via a
+   project-wide StructMemberAlignment setting instead, same as PACK). */
+#ifdef __GNUC__
+#  define PACK_STRUCT __attribute__ ((packed, aligned(1)))
+#else
+#  define PACK_STRUCT
+#endif
+
 /* Because many other #includes define these in bad ways. */
 #undef TRUE
 #undef FALSE
 
+#ifdef __cplusplus
+/* GCC 4.5.2's C++ frontend (the only compiler available for the IRIX/O2
+   port) mis-parses a typedef'd void used as a function's sole parameter
+   type -- "T_void foo(T_void);" fails with "'<anonymous>' has incomplete
+   type" / "invalid use of 'T_void'", confirmed with a two-line repro
+   (typedef void T_void; T_void foo(T_void);) independent of anything else
+   in this codebase. A macro sidesteps it entirely: "T_void" is gone by
+   the time the parser sees the token stream, same as writing "void"
+   directly. Plain C (every other platform, and IRIX's own C files) has
+   no such bug, so it keeps the typedef -- macros are best avoided where
+   a typedef works, and this file is also included from C translation
+   units. */
+#define T_void void
+#else
 typedef void T_void ;
+#endif
 
 typedef unsigned char T_bit1 ;
 

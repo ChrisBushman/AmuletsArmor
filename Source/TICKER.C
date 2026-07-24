@@ -356,7 +356,14 @@ T_void TickerInc(T_void)
 
 #ifdef WIN32
 //#include <time.h>
+#ifdef TARGET_UNIX
+/* See OPTIONS.H for why WIN32 must be hidden from SDL's own headers here. */
+#undef WIN32
 #include <SDL.h>
+#define WIN32 1
+#else
+#include <SDL.h>
+#endif
 static T_word32 G_lastMillisecondCount ;
 static T_word32 G_tickMilli ;
 static T_word32 G_tickCount ;

@@ -21,7 +21,9 @@
 #include "CMDQUEUE.H"
 #include "GENERAL.H"
 #include "MEMORY.H"
+#include "SYNCPACK.H"
 #include "TICKER.H"
+#include "ENDIAN_AA.H"
 
 #ifdef COMPILE_OPTION_CREATE_PACKET_DATA_FILE
 FILE *G_packetFile ;
@@ -258,6 +260,109 @@ T_void CmdQSendLongPacket(
 }
 
 /*-------------------------------------------------------------------------*
+ * Routine:  ISwapPacketPayload
+ *-------------------------------------------------------------------------*/
+/**
+ *  Every application-level packet payload is a raw little-endian struct
+ *  dump keyed by its command byte (see E_packetCommand / PACKET.H).  This
+ *  fixes up byte order in place for whichever layout applies.
+ *
+ *  Called exactly once per packet at each true edge of the wire: on the
+ *  way out, right after a packet is copied into its retry-queue entry (so
+ *  retransmits of that entry resend the same already-swapped bytes without
+ *  swapping again); on the way in, right after PacketGet fills a fresh
+ *  packet from the network.  Since EndianLE16/32 are self-inverse and are
+ *  literally no-ops on little-endian builds, this is safe to call
+ *  unconditionally and cannot change behavior on the existing
+ *  Intel/ARM/Linux builds.
+ *
+ *  NOTE: T_retransmitPacket and T_townUIMessagePacket carry no multi-byte
+ *  fields (only bytes and raw 6-byte addresses), so they need no case here.
+ *
+ *<!-----------------------------------------------------------------------*/
+T_void CmdQSwapPacketPayload(T_byte8 *p_data)
+{
+    switch (p_data[0])  {
+        case PACKET_COMMAND_ACK:
+        {
+            T_ackPacket *p = (T_ackPacket *)p_data ;
+            p->packetIDBeingAcked = EndianLE32(p->packetIDBeingAcked) ;
+            break ;
+        }
+        case PACKET_COMMAND_PLAYER_ID_SELF:
+        {
+            T_playerIDSelfPacket *p = (T_playerIDSelfPacket *)p_data ;
+            p->id.adventure = EndianLE16(p->id.adventure) ;
+            p->id.quest = EndianLE16(p->id.quest) ;
+            break ;
+        }
+        case PACKET_COMMAND_GAME_REQUEST_JOIN:
+        {
+            T_gameRequestJoinPacket *p = (T_gameRequestJoinPacket *)p_data ;
+            p->adventure = EndianLE16(p->adventure) ;
+            break ;
+        }
+        case PACKET_COMMAND_GAME_RESPOND_JOIN:
+        {
+            T_gameRespondJoinPacket *p = (T_gameRespondJoinPacket *)p_data ;
+            p->adventure = EndianLE16(p->adventure) ;
+            break ;
+        }
+        case PACKET_COMMAND_GAME_START:
+        {
+            T_gameStartPacket *p = (T_gameStartPacket *)p_data ;
+            p->adventure = EndianLE16(p->adventure) ;
+            p->timeOfDay = EndianLE32(p->timeOfDay) ;
+            p->firstLevel = EndianLE16(p->firstLevel) ;
+            break ;
+        }
+        case PACKET_COMMAND_SYNC:
+        {
+            /* Always exactly 2 fixed T_syncronizePacket records back to
+               back after the command+groupID prefix -- see
+               ClientSyncUpdate in CSYNCPCK.C, which always sets
+               packet.header.packetLength to cover precisely 2 records. */
+            T_syncPacket *p = (T_syncPacket *)p_data ;
+            T_syncronizePacket *p_syncro = (T_syncronizePacket *)(p->syncData) ;
+            T_word16 rec ;
+            for (rec = 0 ; rec < 2 ; rec++)  {
+                p_syncro[rec].playerObjectId = EndianLE16(p_syncro[rec].playerObjectId) ;
+                p_syncro[rec].x = EndianLES16(p_syncro[rec].x) ;
+                p_syncro[rec].y = EndianLES16(p_syncro[rec].y) ;
+                p_syncro[rec].z = EndianLES16(p_syncro[rec].z) ;
+                p_syncro[rec].angle = EndianLE16(p_syncro[rec].angle) ;
+
+                /* PLAYER_ACTION_ID_SELF packs 2 raw name-character bytes
+                   per actionData slot via a symmetric pointer-cast on
+                   both ends (ClientSyncSendIdSelf / IFindByName in
+                   CSYNCPCK.C) rather than storing a numeric value --
+                   swapping it would reverse each character pair instead
+                   of fixing anything.  Every other action type's
+                   actionData[] entries are genuine numeric fields (see
+                   SYNCPACK.H's action table) and do need the swap. */
+                if (p_syncro[rec].actionType != PLAYER_ACTION_ID_SELF)  {
+                    p_syncro[rec].actionData[0] = EndianLE16(p_syncro[rec].actionData[0]) ;
+                    p_syncro[rec].actionData[1] = EndianLE16(p_syncro[rec].actionData[1]) ;
+                    p_syncro[rec].actionData[2] = EndianLE16(p_syncro[rec].actionData[2]) ;
+                    p_syncro[rec].actionData[3] = EndianLE16(p_syncro[rec].actionData[3]) ;
+                }
+            }
+            break ;
+        }
+        case PACKET_COMMAND_MESSAGE:
+        {
+            T_messagePacket *p = (T_messagePacket *)p_data ;
+            p->player = EndianLE16(p->player) ;
+            break ;
+        }
+        default:
+            /* PACKET_COMMAND_RETRANSMIT, PACKET_COMMAND_TOWN_UI_MESSAGE,
+               and anything unrecognized: no multi-byte fields to swap. */
+            break ;
+    }
+}
+
+/*-------------------------------------------------------------------------*
  * Routine:  ICmdQSendPacket
  *-------------------------------------------------------------------------*/
 /**
@@ -314,6 +419,12 @@ T_void ICmdQSendPacket(
 
     /* Copy in the packet data. */
     p_cmdPacket->packet = *((T_packetLong *)p_packet) ;
+
+    /* Swap the queued copy's payload to wire byte order exactly once here
+       -- CmdQUpdateAllSends may call PacketSend on this same queue entry
+       multiple times for retransmits, and must resend identical bytes
+       each time rather than swapping again. */
+    CmdQSwapPacketPayload(p_cmdPacket->packet.data) ;
 
     /* Now attach this new packet to the appropriate command list. */
     p_cmdPacket->next = G_activeCmdQList[command].first ;
@@ -499,7 +610,7 @@ T_void CmdQUpdateAllSends(T_void)
  *  appropriate action for the command is called.
  *
  *<!-----------------------------------------------------------------------*/
-#include "Message.h"
+#include "MESSAGE.H"
 T_void CmdQUpdateAllReceives(T_void)
 {
     T_packetLong packet ;
@@ -543,6 +654,11 @@ T_void CmdQUpdateAllReceives(T_void)
                 /* Yes, we did.  See what command is being issued. */
                 command = packet.data[0] ;
 
+                /* Fix up payload byte order once per freshly-received
+                   packet, before anything below reads its fields (e.g.
+                   the ACK path's packetIDBeingAcked at data[2]). */
+                CmdQSwapPacketPayload(packet.data) ;
+
                 /* Make sure it is a legal commands.  Unfortunately, */
                 /* we'll have to ignore those illegal commands. */
                 if (command < PACKET_COMMAND_UNKNOWN)  {
@@ -565,8 +681,13 @@ T_void CmdQUpdateAllReceives(T_void)
                             /* Yes.  But is it a lossless command? */
                             if (G_CmdQTypeCommand[ackCommand] ==
                                 PACKET_COMMAND_TYPE_LOSSLESS)  {
-                                /* Get the packet id. */
-                                packetId = *((T_word32 *)(&(packet.data[2]))) ;
+                                /* Get the packet id. packet.data[2] is not
+                                   4-byte aligned (byte offset 2 within the
+                                   packet), so a direct T_word32* dereference
+                                   here faults with SIGBUS on strict-
+                                   alignment targets (e.g. the SGI O2/MIPS
+                                   port) -- memcpy is alignment-agnostic. */
+                                memcpy(&packetId, &(packet.data[2]), sizeof(packetId)) ;
                                 /* Is there a list at that point? */
                                 if (G_activeCmdQList[ackCommand].last != NULL)  {
                                     /* Yes.  Is there an ack for the same packet */
@@ -606,8 +727,10 @@ T_void CmdQUpdateAllReceives(T_void)
                             /* command and id we received. */
                             ackPacket.data[0] = PACKET_COMMAND_ACK ;
                             ackPacket.data[1] = command ;
-                            *((T_word32 *)(&ackPacket.data[2])) =
-                                packet.header.id ;
+                            /* ackPacket.data[2] is not 4-byte aligned --
+                               see the matching read-side comment above. */
+                            memcpy(&ackPacket.data[2], &packet.header.id,
+                                   sizeof(packet.header.id)) ;
                             /* Send it!  Note that we go through our */
                             /* routines. */
                             INDICATOR_LIGHT(272, INDICATOR_GREEN) ;

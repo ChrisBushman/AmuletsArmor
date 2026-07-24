@@ -12,6 +12,7 @@
  *<!-----------------------------------------------------------------------*/
 #include "3D_TRIG.H"
 #include "FILE.H"
+#include "ENDIAN_AA.H"
 
 /** I want my own constants for pi and pi/2. **/
 #ifdef M_PI
@@ -435,6 +436,8 @@ T_void MathInitialize(T_word32 screenWidth)
 //        DebugRoutine(FALSE) ;
         exit(1) ;
     } else {
+        T_word32 mdatIndex ;
+
         /* Reindex all the pointers off of the first pointer. */
         FileRead(fh, G_arcTanTable, sizeof(G_arcTanTable)) ;
         FileRead(fh, G_cosTable, sizeof(G_cosTable)) ;
@@ -445,6 +448,22 @@ T_void MathInitialize(T_word32 screenWidth)
         FileRead(fh, G_translucentTable, sizeof(G_translucentTable)) ;
 //TAKE OUT        FileRead(fh, G_distanceTable, sizeof(G_distanceTable)) ;
         FileClose(fh) ;
+
+        /* mdat.res is a raw little-endian dump of these tables. There is
+           no runtime-computed fallback to fall back on -- MathSine/
+           MathCosine/MathTangent/MathInvCosine are all stubbed to
+           `return 0` in this codebase -- so this is the only place this
+           data ever enters memory, and it must be fixed up here.
+           P_shadeIndex/G_translucentTable are byte tables, no swap. */
+        for (mdatIndex = 0 ; mdatIndex < (256 * 256) ; mdatIndex++)
+            ((T_word16 *)G_arcTanTable)[mdatIndex] =
+                EndianLE16(((T_word16 *)G_arcTanTable)[mdatIndex]) ;
+        for (mdatIndex = 0 ; mdatIndex < MATH_MAX_ANGLE ; mdatIndex++)  {
+            G_cosTable[mdatIndex] = EndianLES32(G_cosTable[mdatIndex]) ;
+            G_invCosTable[mdatIndex] = EndianLES32(G_invCosTable[mdatIndex]) ;
+            G_sinTable[mdatIndex] = EndianLES32(G_sinTable[mdatIndex]) ;
+            G_tanTable[mdatIndex] = EndianLES32(G_tanTable[mdatIndex]) ;
+        }
 /*
         G_cosTable = (T_sword32 *)(((T_byte8 *)G_arcTanTable) +
                       sizeof(T_word16) * 256 * 256) ;

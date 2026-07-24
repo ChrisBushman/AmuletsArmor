@@ -36,13 +36,34 @@
 #include "STATS.H"
 #include "SYNCTIME.H"
 #include "VIEWFILE.H"
+#include "ENDIAN_AA.H"
 
-#define SCRIPT_TAG             (*((T_word32 *)"SpT"))
-#define SCRIPT_TAG_BAD         (*((T_word32 *)"sBd"))
-#define SCRIPT_TAG_DISCARDABLE (*((T_word32 *)"DsP"))
+/* Composed as a compile-time constant rather than a string-literal cast:
+   string literals aren't guaranteed 4-byte aligned, and a raw T_word32*
+   dereference of one faults with SIGBUS on strict-alignment targets
+   (e.g. the SGI O2/MIPS port). Byte 4 is the implicit NUL terminator of
+   the original 3-character literal, preserved here for an exact match. */
+#define SCRIPT_TAG             ((T_word32)('S' << 0) | \
+                                           ('p' << 8) | \
+                                           ('T' << 16) | \
+                                           (0   << 24))
+#define SCRIPT_TAG_BAD         ((T_word32)('s' << 0) | \
+                                           ('B' << 8) | \
+                                           ('d' << 16) | \
+                                           (0   << 24))
+#define SCRIPT_TAG_DISCARDABLE ((T_word32)('D' << 0) | \
+                                           ('s' << 8) | \
+                                           ('P' << 16) | \
+                                           (0   << 24))
 
-#define SCRIPT_INSTANCE_TAG             (*((T_word32 *)"SiT"))
-#define SCRIPT_INSTANCE_TAG_BAD         (*((T_word32 *)"sIb"))
+#define SCRIPT_INSTANCE_TAG             ((T_word32)('S' << 0) | \
+                                                    ('i' << 8) | \
+                                                    ('T' << 16) | \
+                                                    (0   << 24))
+#define SCRIPT_INSTANCE_TAG_BAD         ((T_word32)('s' << 0) | \
+                                                    ('I' << 8) | \
+                                                    ('b' << 16) | \
+                                                    (0   << 24))
 
 #define SCRIPT_MAX_STRING 80
 
@@ -127,6 +148,23 @@ typedef T_word16 (*T_scriptCommand)(
                           T_scriptHeader *script,
                           T_word16 position) ;
 
+/* p_events/p_places (see T_scriptHeader above) are set to code-base +
+   sizeCode, and sizeCode (the on-disk bytecode region's length) is not
+   guaranteed even -- so a *scriptable's* whole events/places array can
+   start at an odd byte offset, making every T_word16-indexed access
+   unaligned, not just some. By the time anything reads through here the
+   one-time load-swap in IScriptLoad has already made the data
+   host-native, so this needs a plain safe read, not another endian
+   swap. */
+static T_word16 IScriptReadWord16(const T_word16 *p)
+{
+    /* AlignedGetW16 (ENDIAN_AA.H), not a local memcpy: memcpy of a fixed
+       2-byte size has been confirmed on the SGI O2's GCC 4.5.2 to get
+       pattern-matched at -O2 into a single plain (alignment-requiring)
+       `lh`, which is exactly the fault this function exists to avoid. */
+    return AlignedGetW16(p) ;
+}
+
 /* Accessor functions/macros. */
 #define ScriptGetPrevious(p_script)  ((p_script)->p_prev)
 #define ScriptGetNext(p_script)      ((p_script)->p_next)
@@ -140,13 +178,20 @@ typedef T_word16 (*T_scriptCommand)(
 #define ScriptGetTag(p_script)           ((p_script)->tag)
 #define ScriptGetNumber(p_script)        ((p_script)->number)
 #define ScriptGetEventPosition(p_script, eventNum)   \
-            ((p_script)->p_events[(eventNum)])
+            (IScriptReadWord16(&((p_script)->p_events[(eventNum)])))
 #define ScriptGetPlacePosition(p_script, placeNum)   \
-            ((p_script)->p_places[(placeNum)])
+            (IScriptReadWord16(&((p_script)->p_places[(placeNum)])))
 #define ScriptGetCodeByte(p_script, codeIndex)   \
             ((p_script)->p_code[(codeIndex)])
+/* Bytecode operands are embedded little-endian 16-bit words at arbitrary
+   (possibly odd) byte offsets chosen by the opcode stream, so there is no
+   single array to bulk-swap on load -- every read goes through here.
+   EndianLE16R reads via memcpy rather than a direct T_word16*
+   dereference, since the latter faults with SIGBUS on strict-alignment
+   targets (e.g. the SGI O2/MIPS port) whenever codeIndex lands on an odd
+   offset -- which the comment above already flags as expected. */
 #define ScriptGetCodeWord(p_script, codeIndex)   \
-            (*((T_word16 *)(&((p_script)->p_code[(codeIndex)]))))
+            (EndianLE16R(&((p_script)->p_code[(codeIndex)])))
 
 #define ScriptInstanceGetHeader(p_inst)  ((p_inst)->p_header)
 #define ScriptInstanceGetTag(p_inst)     ((p_inst)->instanceTag)
@@ -801,8 +846,8 @@ static T_scriptHeader *IScriptLoad(T_word32 number)
             p_disk = (T_scriptHeaderDisk32 *)p_loaded ;
             payloadOffset = sizeof(T_scriptHeaderDisk32) ;
             payloadSize = size - payloadOffset ;
-            minimumPayload = p_disk->sizeCode +
-                (((T_word32)p_disk->highestEvent + (T_word32)p_disk->highestPlace) * sizeof(T_word16)) ;
+            minimumPayload = EndianLE32(p_disk->sizeCode) +
+                (((T_word32)EndianLE16(p_disk->highestEvent) + (T_word32)EndianLE16(p_disk->highestPlace)) * sizeof(T_word16)) ;
 
             if (minimumPayload > payloadSize)  {
                 MemFree(p_loaded) ;
@@ -810,15 +855,35 @@ static T_scriptHeader *IScriptLoad(T_word32 number)
             } else {
                 p_script = (T_scriptHeader *)MemAlloc(sizeof(T_scriptHeader) + payloadSize) ;
                 if (p_script != NULL)  {
+                    T_word16 evtNum ;
                     memset(p_script, 0, sizeof(T_scriptHeader)) ;
-                    p_script->highestEvent = p_disk->highestEvent ;
-                    p_script->highestPlace = p_disk->highestPlace ;
-                    p_script->sizeCode = p_disk->sizeCode ;
+                    p_script->highestEvent = EndianLE16(p_disk->highestEvent) ;
+                    p_script->highestPlace = EndianLE16(p_disk->highestPlace) ;
+                    p_script->sizeCode = EndianLE32(p_disk->sizeCode) ;
                     memcpy(p_script->reserved, p_disk->reserved, sizeof(p_script->reserved)) ;
-                    p_script->number = p_disk->number ;
+                    p_script->number = EndianLE32(p_disk->number) ;
 
                     p_data = (T_byte8 *)(p_script + 1) ;
                     memcpy(p_data, p_loaded + payloadOffset, payloadSize) ;
+
+                    /* The events/places arrays right after the code region
+                       are flat T_word16 arrays -- swap them in place now
+                       that their counts are known and host-native. Code
+                       itself is swapped opportunistically by
+                       ScriptGetCodeWord/IScriptGetAny at read time, since
+                       operands sit at opcode-dependent offsets.
+                       sizeCode (the preceding bytecode region's length) is
+                       not guaranteed even, so this array's own base can be
+                       at an odd byte offset -- EndianLE16P (memcpy-based)
+                       rather than a direct T_word16* index avoids faulting
+                       with SIGBUS on strict-alignment targets (e.g. the
+                       SGI O2/MIPS port). */
+                    for (evtNum = 0 ; evtNum < p_script->highestEvent ; evtNum++)
+                        EndianLE16P(p_data + p_script->sizeCode +
+                                    evtNum * sizeof(T_word16)) ;
+                    for (evtNum = 0 ; evtNum < p_script->highestPlace ; evtNum++)
+                        EndianLE16P(p_data + p_script->sizeCode +
+                                    (p_script->highestEvent + evtNum) * sizeof(T_word16)) ;
                 }
 
                 MemFree(p_loaded) ;
@@ -1397,14 +1462,14 @@ static T_scriptDataItem IScriptGetAny(
             var.type = type ;
             p_data = (ScriptGetCode(p_script) + *position) ;
             p_number = (T_sword32 *)((T_sbyte8 *)p_data) ;
-            var.ns.number = *((T_sword16 *)p_number) ;
+            var.ns.number = EndianLES16R(p_number) ;
             *position += sizeof(T_sword16) ;
             break ;
         case SCRIPT_DATA_TYPE_32_BIT_NUMBER:
             var.type = type ;
             p_data = (ScriptGetCode(p_script) + *position) ;
             p_number = (T_sword32 *)((T_sbyte8 *)p_data) ;
-            var.ns.number = *((T_sword32 *)p_number) ;
+            var.ns.number = EndianLES32R(p_number) ;
             *position += sizeof(T_sword32) ;
             break ;
         default:

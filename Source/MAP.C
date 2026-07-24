@@ -1502,8 +1502,8 @@ T_void MapSetMainTextureForSide(T_word16 sideNum, T_byte8 *p_textureName)
     p_side->mainTx[0] = textureName[0] ;
 
     if ((textureName[0] != '\0') && (textureName[0] != '-'))
-        *TX_PTR_FIELD(p_side->mainTx) =
-            PictureLock(textureName, &G_3dMainResourceArray[sideNum]) ;
+        TX_PTR_SET(p_side->mainTx,
+            PictureLock(textureName, &G_3dMainResourceArray[sideNum])) ;
     else {
         G_3dMainResourceArray[sideNum] = RESOURCE_BAD ;
     }
@@ -1542,8 +1542,8 @@ T_void MapSetLowerTextureForSide(T_word16 sideNum, T_byte8 *p_textureName)
     p_side->lowerTx[0] = textureName[0] ;
 
     if ((textureName[0] != '\0') && (textureName[0] != '-'))
-        *TX_PTR_FIELD(p_side->lowerTx) =
-            PictureLock(textureName, &G_3dLowerResourceArray[sideNum]) ;
+        TX_PTR_SET(p_side->lowerTx,
+            PictureLock(textureName, &G_3dLowerResourceArray[sideNum])) ;
     else {
         G_3dLowerResourceArray[sideNum] = RESOURCE_BAD ;
     }
@@ -1582,8 +1582,8 @@ T_void MapSetUpperTextureForSide(T_word16 sideNum, T_byte8 *p_textureName)
     p_side->upperTx[0] = textureName[0] ;
 
     if ((textureName[0] != '\0') && (textureName[0] != '-'))
-        *TX_PTR_FIELD(p_side->upperTx) =
-            PictureLock(textureName, &G_3dUpperResourceArray[sideNum]) ;
+        TX_PTR_SET(p_side->upperTx,
+            PictureLock(textureName, &G_3dUpperResourceArray[sideNum])) ;
     else {
         G_3dUpperResourceArray[sideNum] = RESOURCE_BAD ;
     }
@@ -1668,10 +1668,10 @@ T_void MapSetFloorTextureForSector(
         PictureUnlockAndUnfind(G_3dFloorResourceArray[sectorNum]) ;
 
     if ((textureName[0] != '\0') && (textureName[0] != '-'))
-        *TX_PTR_FIELD(p_sector->floorTx) =
-            PictureLock(textureName, &G_3dFloorResourceArray[sectorNum]) ;
+        TX_PTR_SET(p_sector->floorTx,
+            PictureLock(textureName, &G_3dFloorResourceArray[sectorNum])) ;
     else
-        *TX_PTR_FIELD(p_sector->floorTx) = NULL ;
+        TX_PTR_SET(p_sector->floorTx, NULL) ;
 
     DebugEnd() ;
 }
@@ -1705,10 +1705,10 @@ T_void MapSetCeilingTextureForSector(
         PictureUnlockAndUnfind(G_3dCeilingResourceArray[sectorNum]) ;
 
     if ((textureName[0] != '\0') && (textureName[0] != '-'))
-        *TX_PTR_FIELD(p_sector->ceilingTx) =
-            PictureLock(textureName, &G_3dCeilingResourceArray[sectorNum]) ;
+        TX_PTR_SET(p_sector->ceilingTx,
+            PictureLock(textureName, &G_3dCeilingResourceArray[sectorNum])) ;
     else
-        *TX_PTR_FIELD(p_sector->ceilingTx) = NULL ;
+        TX_PTR_SET(p_sector->ceilingTx, NULL) ;
 
     DebugEnd() ;
 }
@@ -1774,7 +1774,7 @@ T_byte8 *MapGetUpperTextureName(T_word16 sideNum)
     if (p_side->upperTx[0] == '-')  {
         p_name = G_noName ;
     } else {
-        p_pic = *TX_PTR_FIELD(p_side->upperTx) ;
+        p_pic = TX_PTR_GET(p_side->upperTx) ;
         p_name = PictureGetName(p_pic) ;
     }
 
@@ -1808,7 +1808,7 @@ T_byte8 *MapGetLowerTextureName(T_word16 sideNum)
     if (p_side->lowerTx[0] == '-')  {
         p_name = G_noName ;
     } else {
-        p_pic = *TX_PTR_FIELD(p_side->lowerTx) ;
+        p_pic = TX_PTR_GET(p_side->lowerTx) ;
         p_name = PictureGetName(p_pic) ;
     }
 
@@ -1842,7 +1842,7 @@ T_byte8 *MapGetMainTextureName(T_word16 sideNum)
     if (p_side->mainTx[0] == '-')  {
         p_name = G_noName ;
     } else {
-        p_pic = *TX_PTR_FIELD(p_side->mainTx) ;
+        p_pic = TX_PTR_GET(p_side->mainTx) ;
         p_name = PictureGetName(p_pic) ;
     }
 
@@ -1873,7 +1873,7 @@ T_byte8 *MapGetFloorTextureName(T_word16 sectorNum)
     DebugCheck(sectorNum < G_Num3dSectors) ;
 
     p_sector = G_3dSectorArray + sectorNum ;
-    p_pic = *TX_PTR_FIELD(p_sector->floorTx) ;
+    p_pic = TX_PTR_GET(p_sector->floorTx) ;
     p_name = PictureGetName(p_pic) ;
 
     DebugEnd() ;
@@ -1903,7 +1903,7 @@ T_byte8 *MapGetCeilingTextureName(T_word16 sectorNum)
     DebugCheck(sectorNum < G_Num3dSectors) ;
 
     p_sector = G_3dSectorArray + sectorNum ;
-    p_pic = *TX_PTR_FIELD(p_sector->ceilingTx) ;
+    p_pic = TX_PTR_GET(p_sector->ceilingTx) ;
     p_name = PictureGetName(p_pic) ;
 
     DebugEnd() ;

@@ -199,7 +199,23 @@
 #pragma warning(disable:4100)
 //#include <windows.h>
 //#include <direct.h>
-#include <sdl.h>
+#ifdef TARGET_UNIX
+/* WIN32 is defined project-wide on this codebase's Apple/Unix builds too
+   (a handful of unrelated WIN32-gated code paths in this header and
+   elsewhere are shared with the Windows build). Real SDL 1.2's own
+   SDL_platform.h treats bare WIN32 as "actually targeting Windows" and
+   translates it to __WIN32__, which sends begin_code.h down the
+   __declspec(dllexport) branch -- meaningless to a non-MSVC compiler and
+   fatal on a real GCC/Clang toolchain (this doesn't surface against
+   sdl12-compat's shimmed headers, only real SDL 1.2, e.g. via Tigerbrew).
+   Hide WIN32 from SDL's own headers here, then restore it immediately
+   after so nothing else in this codebase notices. */
+#undef WIN32
+#include <SDL.h>
+#define WIN32 1
+#else
+#include <SDL.h>
+#endif
 // Delay in a number of milliseconds to delay
 #define delay(x) if (x < 14) { SDL_Delay(14); } else { SDL_Delay(x); }
 /* The mouse driver is handled not in the mouse calls, but in the file 'winmouse.c' */

@@ -91,7 +91,7 @@ T_void ViewInitialize(T_void)
     View3dInitialize() ;
     ObjectsInitialize() ;
 
-    View3dSetSize(312, 148) ;
+    View3dSetSize(312*VIEW3D_SCALE, 148*VIEW3D_SCALE) ;
 
     MapInitialize() ;
     OverheadInitialize() ;
@@ -186,21 +186,35 @@ INDICATOR_LIGHT(105, INDICATOR_RED) ;
 
 INDICATOR_LIGHT(109, INDICATOR_GREEN) ;
     OverheadSetCenterPoint(PlayerGetX16(), PlayerGetY16()) ;
-    OverheadDraw(0, 0, VIEW3D_CLIP_RIGHT-VIEW3D_CLIP_LEFT-1, VIEW3D_HEIGHT-1) ;
+    OverheadDraw(0, 0,
+        (VIEW3D_CLIP_RIGHT-VIEW3D_CLIP_LEFT)/VIEW3D_SCALE - 1,
+        (VIEW3D_HEIGHT/VIEW3D_SCALE)-1) ;   /* logical overlay coords */
 
     /* Draw the overlay if there is a function to draw it. */
     /* !!! Note:  Shouldn't really be using VIEW3D_WIDTH and HEIGHT */
     if (F_viewHandler != NULL)
 //        F_viewHandler(VIEW3D_CLIP_LEFT, 0, VIEW3D_CLIP_RIGHT-1, VIEW3D_HEIGHT-1) ;
-        F_viewHandler(0, 0, VIEW3D_CLIP_RIGHT-VIEW3D_CLIP_LEFT-1, VIEW3D_HEIGHT-1) ;
+        F_viewHandler(0, 0,
+            (VIEW3D_CLIP_RIGHT-VIEW3D_CLIP_LEFT)/VIEW3D_SCALE - 1,
+            (VIEW3D_HEIGHT/VIEW3D_SCALE)-1) ;   /* logical overlay coords */
 
     /* Display the screen. */
     View3dDisplayView() ;
 
+    /* TRUE-HIGHRES: end of the view phase -- everything after this      */
+    /* (banner forms, UI feedback) belongs on the classic screen.        */
+    GrScreenSet(GRAPHICS_ACTUAL_SCREEN) ;
+
     GrScreenSet(GRAPHICS_ACTUAL_SCREEN);
 
-    if (G_updateFormOverView)
+    if (G_updateFormOverView)  {
         GraphicUpdateAllGraphicsForced();
+        /* TRUE-HIGHRES: a form/prompt is drawn over the view on the     */
+        /* classic screen; consume the frame flag so the compositor      */
+        /* presents the classic path this tick and the prompt shows      */
+        /* (world is softly pixel-doubled behind the modal -- correct).  */
+        View3dHighResGrabFrameDrawn() ;
+    }
 
     TICKER_TIME_ROUTINE_ENDM("ViewDraw", 100) ;
 
@@ -524,8 +538,8 @@ T_3dObject *ViewGetXYTarget(T_word16 x, T_word16 y)
         objectPos = View3dGetObjectAtXY(
                         objectPos,
                         &p_object,
-                        x-VIEW3D_UPPER_LEFT_X+VIEW3D_CLIP_LEFT,
-                        y-VIEW3D_UPPER_LEFT_Y) ;
+                        (x-VIEW3D_UPPER_LEFT_X)*VIEW3D_SCALE+VIEW3D_CLIP_LEFT,
+                        (y-VIEW3D_UPPER_LEFT_Y)*VIEW3D_SCALE) ;
     } while ((p_object == NULL) && (objectPos != 0xFFFF)) ;
 
     /* If didn't get an object, try a bigger area (5x5 pixel area) */
@@ -537,8 +551,8 @@ T_3dObject *ViewGetXYTarget(T_word16 x, T_word16 y)
                     objectPos = View3dGetObjectAtXY(
                                     objectPos,
                                     &p_object,
-                                    x-VIEW3D_UPPER_LEFT_X+VIEW3D_CLIP_LEFT+dx,
-                                    y-VIEW3D_UPPER_LEFT_Y+dy) ;
+                                    (x-VIEW3D_UPPER_LEFT_X)*VIEW3D_SCALE+VIEW3D_CLIP_LEFT+dx*VIEW3D_SCALE,
+                                    (y-VIEW3D_UPPER_LEFT_Y)*VIEW3D_SCALE+dy*VIEW3D_SCALE) ;
                 } while ((p_object == NULL) && (objectPos != 0xFFFF)) ;
             }
         }
@@ -570,7 +584,8 @@ E_Boolean ViewIsAt(T_word16 x, T_word16 y)
 	x -= VIEW3D_UPPER_LEFT_X ;
 	y -= VIEW3D_UPPER_LEFT_Y ;
 
-	if ((x < (VIEW3D_CLIP_RIGHT - VIEW3D_CLIP_LEFT)) && (y <= VIEW3D_HEIGHT))
+	if ((x < ((VIEW3D_CLIP_RIGHT - VIEW3D_CLIP_LEFT)/VIEW3D_SCALE)) &&
+	    (y <= (VIEW3D_HEIGHT/VIEW3D_SCALE)))
 		at = TRUE ;
 
     DebugEnd() ;

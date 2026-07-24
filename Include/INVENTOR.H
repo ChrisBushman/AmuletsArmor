@@ -106,6 +106,32 @@ typedef struct {
 
 } T_inventoryItemStruct;
 
+/* On-disk record for a saved inventory item (character save file).
+   T_inventoryItemStruct embeds live pointers (object, p_bitmap, elementID)
+   that are always regenerated on load and never trusted from disk -- but
+   their *size* (4 bytes on 32-bit PPC, 8 bytes on 64-bit Intel/ARM) still
+   shifts every field's on-disk offset, making a raw dump of the runtime
+   struct non-portable across pointer widths. This record replaces each
+   pointer with a fixed 4-byte placeholder (always written 0, ignored on
+   read) so the layout is identical on every build. */
+typedef struct {
+    T_word16 locx               PACK;
+    T_word16 locy                PACK;
+    T_word16 picwidth            PACK;
+    T_word16 picheight           PACK;
+    T_sbyte8 gridstartx          PACK;
+    T_sbyte8 gridstarty          PACK;
+    T_sbyte8 gridspacesx         PACK;
+    T_sbyte8 gridspacesy         PACK;
+    T_word32 objectReserved      PACK;
+    T_word32 objecttype          PACK;
+    T_word32 bitmapReserved      PACK;
+    T_byte8 storepage            PACK;
+    T_byte8 numitems             PACK;
+    T_equipItemDescription itemdesc PACK;
+    T_word32 elementReserved     PACK;
+} T_inventoryItemDiskStruct;
+
 /* global routine prototypes */
 T_void InventoryInit(T_void);
 T_void InventoryFinish(T_void);

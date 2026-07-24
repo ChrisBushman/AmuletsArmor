@@ -16,6 +16,7 @@
 #include "RESOURCE.H"
 #include "PICS.H"
 #include "TICKER.H"
+#include "ENDIAN_AA.H"
 
 #define MAX_IMAGES 32
 #define MAX_LAYERS 3
@@ -50,6 +51,28 @@ static E_Boolean G_isAnimating = FALSE ;
 
 static T_word16 G_frame = 0 ;
 static T_sword32 G_frameFraction = 0 ;
+
+/* Weapon animation info (WEAPONS/<name>/Info) is a raw little-endian
+   struct dump.  Fix up byte order in place, exactly once, right after a fresh
+   load -- the resource stays locked for as long as it's the active
+   animation (see IUnlockAnimation/ILockAnimation), so a later reload of
+   the same still-cached resource must not be swapped again.  imageNames
+   is a byte array, no swap needed.  The per-image RLE pixel streams
+   (G_images[]) are a different, variable-interpretation format handled
+   at read time in IDrawLayer instead, since a bulk swap can't know where
+   each embedded T_word16 falls in the stream ahead of time. */
+static T_void ISwapOverlayAnimation(T_overlayAnimation *p)
+{
+    T_word16 layer, frame ;
+
+    EndianLE16P(&p->lengthAnimation) ;
+    for (layer=0; layer<MAX_LAYERS; layer++)  {
+        for (frame=0; frame<MAX_IMAGE_LENGTH; frame++)  {
+            EndianLES16P(&p->animation[layer][frame].xOffset) ;
+            EndianLES16P(&p->animation[layer][frame].yOffset) ;
+        }
+    }
+}
 
 /* Globals: */
 static T_overlayCallback G_callback = NULL ;
@@ -180,8 +203,17 @@ T_void OverlaySetAnimation(T_word16 animationNumber)
             G_callback(G_animationNumber, 0) ;
 
     IUnlockAnimation() ;
-    G_animation = (T_overlayAnimation *)
-                      PictureLockData(filename, &G_animationResource) ;
+    {
+        T_resource foundRes ;
+        E_Boolean freshLoad ;
+
+        foundRes = PictureFind(filename) ;
+        freshLoad = (foundRes != RESOURCE_BAD) ? ResourceIsFreshLoad(foundRes) : FALSE ;
+        G_animation = (T_overlayAnimation *)PictureLockDataQuick(foundRes) ;
+        G_animationResource = foundRes ;
+        if (freshLoad)
+            ISwapOverlayAnimation(G_animation) ;
+    }
     ILockAnimation(prefix) ;
     G_animationNumber = animationNumber ;
 
@@ -440,13 +472,19 @@ static T_void IDrawLayer(
         p_screen = (T_byte8 *)GrScreenGet() ;
 
         if (p_data)  {
-            entry = *((T_word16 *)p_data) ;
+            /* p_data advances by data-dependent run lengths (often odd),
+               so these T_word16 reads are frequently misaligned -- a
+               direct pointer-cast dereference faults with SIGBUS on
+               strict-alignment targets (e.g. the SGI O2/MIPS port).
+               EndianLE16R goes through memcpy, which is
+               alignment-agnostic. */
+            entry = EndianLE16R(p_data) ;
             p_data += 2 ;
             while (entry != 0xFFFF)  {
                 if (entry & 0x8000)  {
                     y = p_frame->yOffset + (entry & 0x7fff) + yOffset ;
                 } else {
-                    size = *((T_word16 *)p_data) ;
+                    size = EndianLE16R(p_data) ;
                     p_data += 2 ;
                     if (y > bottom)
                         break ;
@@ -494,7 +532,7 @@ if (drawSize >= 300)  {
                     }
                     p_data += size ;
                 }
-                entry = *((T_word16 *)p_data) ;
+                entry = EndianLE16R(p_data) ;
                 p_data += 2 ;
             }
         }

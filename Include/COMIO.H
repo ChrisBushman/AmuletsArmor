@@ -5,7 +5,7 @@
 #ifndef _COMIO_H_
 #define _COMIO_H_
 
-#include "general.h"
+#include "GENERAL.H"
 
 /* COMIO Routines: */
 

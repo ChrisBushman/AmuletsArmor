@@ -1,9 +1,10 @@
-#include "direct.h"
+#include "WINDIRECT.H"
 #include <time.h>
 #ifdef TARGET_UNIX
 #include <unistd.h>
 #include <signal.h>
 #include <stdlib.h>
+#include <string.h>
 #else
 #include <Windows.h>
 #endif
@@ -14,15 +15,29 @@
 #include <SDL.h>
 #include "resource.h"
 
+#ifdef TARGET_UNIX
+/* TRUE-HIGHRES: native high-res 3D view compositing */
+#include "HIGHRES.H"
+#include "3D_VIEW.H"
+#include "RESSCALE.H"
+#endif
+
 #define CAP_SPEED_TO_FPS       0 // 70 // 0
 
 static int G_done = FALSE;
 static SDL_Surface* screen;
 static SDL_Surface* surface;
+#ifndef TARGET_UNIX
 static SDL_Surface* largesurface;
-#ifdef TARGET_UNIX
-static unsigned char *G_linearFrameBuffer = NULL;
 #endif
+#ifdef TARGET_UNIX
+/* TRUE-HIGHRES: the window itself is managed by RESSCALE (resolution.ini:
+   any window size incl. 1024x768 / 1920x1080, fullscreen, letterboxing,
+   F11 + Alt+Enter hotkeys).  "screen" is the fixed-size logical frame
+   RESSCALE scales from; the old largesurface middle-man is gone. */
+#define LOGICAL_W (320 * VIEW3D_SCALE)
+#define LOGICAL_H (200 * VIEW3D_SCALE)
+#else
 static SDL_Rect srcrect = {
         0, 0,
         320, 240
@@ -35,6 +50,7 @@ static SDL_Rect destrect = {
         0, 0,
         640, 400
     };
+#endif
 extern T_void KeyboardUpdate(E_Boolean updateBuffers);
 
 #ifdef TARGET_UNIX
@@ -42,14 +58,20 @@ static void HandleUnixSignal(int sig)
 {
     (void)sig;
     G_done = TRUE;
-    exit(0);
+    /* exit() runs atexit-registered cleanup (including SDL_Quit), which is
+       not async-signal-safe -- calling it here can reenter SDL mid-frame
+       from signal context and crash (observed: EXC_BAD_ACCESS in
+       SDL_VideoQuit while the main thread was inside ResScaleUpdate/
+       WindowsUpdate). _exit() terminates immediately without running that
+       cleanup, which is safe from a signal handler. */
+    _exit(0);
 }
 #endif
 
 void SleepMS(T_word32 aMS)
 {
 #ifdef TARGET_UNIX
-    usleep(aMS * 1000);
+    SDL_Delay(aMS);
 #else
     Sleep(aMS);
 #endif
@@ -61,16 +83,10 @@ void WindowsUpdateMouse(void)
     int x, y;
     Uint8 state;
 
-    SDL_PumpEvents();
-    state = SDL_GetMouseState(&x, &y);
 #ifdef TARGET_UNIX
-    /* Game UI runs in 320x200 logical coordinates. */
-    x >>= 1;
-    y >>= 1;
-    if (x < 0) x = 0;
-    if (x > 319) x = 319;
-    if (y < 0) y = 0;
-    if (y > 199) y = 199;
+    state = ResScaleGetMouseState(&x, &y);  /* logical LOGICAL_WxLOGICAL_H */
+#else
+    state = SDL_GetMouseState(&x, &y);
 #endif
     DirectMouseSet(x, y);
     if (state & SDL_BUTTON_LMASK)
@@ -89,10 +105,15 @@ void WindowsUpdateEvents(void)
     static int altPressed = FALSE;
 
     while ( SDL_PollEvent(&event) ) {
+#ifdef TARGET_UNIX
+        ResScaleEvent(&event);   /* window->logical coords + hotkeys */
+#endif
         switch (event.type) {
             case SDL_QUIT:
                 G_done = TRUE;
+#ifdef TARGET_UNIX
                 exit(0);
+#endif
                 break;
             case SDL_KEYDOWN:
                 if ((event.key.keysym.sym == SDLK_LALT) || (event.key.keysym.sym == SDLK_RALT)) {
@@ -104,7 +125,7 @@ void WindowsUpdateEvents(void)
                     flags = screen->flags; /* Save the current flags in case toggling fails */
                     screen = SDL_SetVideoMode(0, 0, 0, screen->flags ^ SDL_FULLSCREEN); /*Toggles FullScreen Mode */
                     if(screen == NULL) screen = SDL_SetVideoMode(0, 0, 0, flags); /* If toggle FullScreen failed, then switch back */
-                    if(screen == NULL) exit(1); /* If you can't switch back for some reason, then epic fail */                    
+                    if(screen == NULL) exit(1); /* If you can't switch back for some reason, then epic fail */
 #endif
                 }
                 break;
@@ -129,10 +150,10 @@ void WindowsUpdateEvents(void)
                 DirectMouseSetButton(flags);
                 break;
 #endif
-        }    
+        }
         SDL_GetKeyState(NULL);
         //keys = SDL_GetKeyState(NULL);
-        
+
 //        if ( keys[SDLK_UP] )    ypos -= 1;
 //        if ( keys[SDLK_DOWN] )  ypos += 1;
 //        if ( keys[SDLK_LEFT] )  xpos -= 1;
@@ -189,25 +210,25 @@ void WindowsUpdate(char *p_screen, unsigned char *palette)
 {
     SDL_Color colors[256];
     int i;
-#ifdef TARGET_UNIX
-    unsigned char *src = (unsigned char *)p_screen;
-#else
     unsigned char *src = (char *)surface->pixels;
-#endif
+#ifndef TARGET_UNIX
     unsigned char *dst = (unsigned char *)largesurface->pixels;
     unsigned char *line;
+#endif
     static int lastFPS = 0;
     static int fps = 0;
     int y;
     T_word32 tick = clock();
     static T_word32 lastTick = 0xFFFFEEEE;
     static double movingAverage = 0;
+#ifndef TARGET_UNIX
     T_word32 v;
+#endif
     T_word32 frac;
 
 #if CAP_SPEED_TO_FPS
         if ((tick-lastTick)<(1000/CAP_SPEED_TO_FPS)) {
-Sleep((1000/CAP_SPEED_TO_FPS) - (tick-lastTick));
+SleepMS((1000/CAP_SPEED_TO_FPS) - (tick-lastTick));
         // 10 ms between frames (top out at 100 ms)
     } else
 #endif
@@ -222,29 +243,53 @@ Sleep((1000/CAP_SPEED_TO_FPS) - (tick-lastTick));
         colors[i].b = ((((unsigned int)*(palette++))&0x3F)<<2);
     }
     //SDL_SetColors(surface, colors, 0, 256);
+#ifdef TARGET_UNIX
+    SDL_SetColors(screen, colors, 0, 256);
+
+    /* TRUE-HIGHRES: compose the presentable frame -- natively rendered  */
+    /* 3D view + pixel-doubled classic UI + masked overlay on top -- and  */
+    /* hand it to RESSCALE, which scales it to the actual window.         */
+    if ((HighResFrameWidth() == LOGICAL_W) &&
+        (HighResFrameHeight() == LOGICAL_H))  {
+        if (View3dHighResGrabFrameDrawn())  {
+            HighResCompose((unsigned char *)surface->pixels);
+            HighResComposeMaskedOver(
+                (unsigned char *)View3dGetOverlayScreen());
+        } else  {
+            HighResComposeAll((unsigned char *)surface->pixels);
+        }
+        {
+            unsigned char *fr = HighResFrame();
+            int yy;
+
+            for (yy = 0; yy < LOGICAL_H; yy++)
+                memcpy((unsigned char *)screen->pixels
+                           + (size_t)yy * screen->pitch,
+                       fr + (size_t)yy * LOGICAL_W,
+                       LOGICAL_W);
+        }
+    } else  {
+        /* Before View3dInitialize (loading screens) the HIGHRES frame    */
+        /* does not exist yet: nearest-stretch the classic 320x200 screen */
+        /* into the logical frame directly.                               */
+        int xx;
+
+        for (y = 0; y < LOGICAL_H; y++)  {
+            unsigned char *srow = src
+                + (size_t)((y * SCREEN_HEIGHT) / LOGICAL_H) * SCREEN_WIDTH;
+            unsigned char *drow = (unsigned char *)screen->pixels
+                + (size_t)y * screen->pitch;
+
+            for (xx = 0; xx < LOGICAL_W; xx++)
+                drow[xx] = srow[(xx * SCREEN_WIDTH) / LOGICAL_W];
+        }
+    }
+
+    ResScaleUpdate();
+#else
     SDL_SetColors(largesurface, colors, 0, 256);
 
     // Blit the current surface from 320x200 to 640x400
-#ifdef TARGET_UNIX
-    {
-        int x;
-        int pitch = largesurface->pitch;
-        for (y=0; y<200; y++) {
-            unsigned char *srcLine = src + (y * 320);
-            unsigned char *dstLine0 = dst + ((y * 2) * pitch);
-            unsigned char *dstLine1 = dst + (((y * 2) + 1) * pitch);
-
-            for (x=0; x<320; x++) {
-                unsigned char c = srcLine[x];
-                int dx = x * 2;
-                dstLine0[dx] = c;
-                dstLine0[dx + 1] = c;
-                dstLine1[dx] = c;
-                dstLine1[dx + 1] = c;
-            }
-        }
-    }
-#else
     line = src;
     for (y=0, frac=0; y<200; y++, line+=320) {
 //        for (x=0; x<320; x++) {
@@ -263,12 +308,12 @@ Sleep((1000/CAP_SPEED_TO_FPS) - (tick-lastTick));
 //        }
 //        Copy2x_320times(dst, src);
     }
-#endif
 
     if (SDL_BlitSurface(largesurface, &largesrcrect, screen, &destrect)) {
         printf("Failed blit: %s\n", SDL_GetError());
     }
     SDL_UpdateRect(screen, 0, 0, 0, 0);
+#endif
     fps++;
 
     if ((tick-lastFPS) >= 1000) {
@@ -283,7 +328,7 @@ Sleep((1000/CAP_SPEED_TO_FPS) - (tick-lastTick));
     WindowsUpdateMouse();
     KeyboardUpdate(TRUE) ;
 #if CAP_SPEED_TO_100_FPS
-    Sleep(1);
+    SleepMS(1);
 #endif
     }
 }
@@ -313,13 +358,30 @@ int SDL_main(int argc, char *argv[])
 
     atexit(SDL_Quit);
 
+#ifdef TARGET_UNIX
+    /* RESSCALE opens the real window per resolution.ini (any size,
+       fullscreen, letterboxing) and hands back the fixed logical frame
+       the game/HIGHRES pipeline fills each frame.                       */
+    ResScaleInit();
+    screen = ResScaleSetVideoMode(LOGICAL_W, LOGICAL_H, 8, SDL_SWSURFACE);
+#else
 #ifdef NDEBUG
     screen = SDL_SetVideoMode(640, 400, 32, SDL_HWSURFACE|SDL_DOUBLEBUF|SDL_FULLSCREEN);
 #else
     screen = SDL_SetVideoMode(640, 400, 32, SDL_HWSURFACE|SDL_DOUBLEBUF);
 #endif
+#endif
     SDL_WM_SetCaption("Amulets & Armor", "Amulets & Armor");
     SDL_ShowCursor(SDL_DISABLE);
+#ifdef TARGET_UNIX
+    /* Confine the OS cursor to the game window for the whole session --
+       previously this only happened while MouseRelativeModeOn (mouselook)
+       was active, so the cursor was free to leave the window any time the
+       player was in a menu/inventory screen (most of the time in this
+       RPG). See MOUSEMOD.C: MouseRelativeModeOn/Off no longer touch grab
+       state, since it's now permanent. */
+    SDL_WM_GrabInput(SDL_GRAB_ON);
+#endif
 
     if(screen == NULL)
     {
@@ -327,33 +389,38 @@ int SDL_main(int argc, char *argv[])
           return 1;
     }
 
+#ifdef TARGET_UNIX
+    surface = SDL_CreateRGBSurface(SDL_SWSURFACE, SCREEN_WIDTH, SCREEN_HEIGHT, 8, 0, 0, 0, 0);
+#else
     surface = SDL_CreateRGBSurface(SDL_SWSURFACE, 320, 240, 8, 0, 0, 0, 0);
+#endif
     if (surface == NULL) {
         printf("Could not create overlay: %s\n", SDL_GetError());
         return 1;
     }
+#ifndef TARGET_UNIX
     largesurface = SDL_CreateRGBSurface(SDL_SWSURFACE, 640, 400, 8, 0, 0, 0, 0);
     if (largesurface == NULL) {
         printf("Could not create overlay: %s\n", SDL_GetError());
         return 1;
     }
+#endif
     SDL_SetColors(surface, &black, 0, 1);
     SDL_SetColors(surface, &white, 255, 1);
-#ifdef TARGET_UNIX
-    G_linearFrameBuffer = (unsigned char *)malloc(320 * 240);
-    if (G_linearFrameBuffer == NULL) {
-        printf("Could not allocate linear framebuffer\n");
-        return 1;
-    }
-    GRAPHICS_ACTUAL_SCREEN = (void *)G_linearFrameBuffer;
-    pixels = (char *)G_linearFrameBuffer;
-
-    signal(SIGINT, HandleUnixSignal);
-    signal(SIGTERM, HandleUnixSignal);
-#else
     pixels = (char *)surface->pixels;
     GRAPHICS_ACTUAL_SCREEN = (void *)pixels;
-#endif
+#ifdef TARGET_UNIX
+    signal(SIGINT, HandleUnixSignal);
+    signal(SIGTERM, HandleUnixSignal);
+    for (y=0; y<SCREEN_HEIGHT; y++) {
+        for (x=0; x<SCREEN_WIDTH; x++, pixels++) {
+            if ((x == 0) || (x == (SCREEN_WIDTH-1)) || (y == 0) || (y == (SCREEN_HEIGHT-1)))
+                *pixels = 255;
+            else
+                *pixels = 0;
+        }
+    }
+#else
     for (y=0; y<240; y++) {
         for (x=0; x<320; x++, pixels++) {
             if ((x == 0) || (x == 319) || (y == 0) || (y == 239))
@@ -362,6 +429,7 @@ int SDL_main(int argc, char *argv[])
                 *pixels = 0;
         }
     }
+#endif
 
     {
 #ifndef NDEBUG
@@ -378,3 +446,18 @@ int SDL_main(int argc, char *argv[])
     return 0;
 }
 
+#ifdef AA_GENERIC_UNIX_MAIN
+/* SDL_main.h's own #define main SDL_main only fires on Win32/Mac/etc (see
+   its source) -- on a "plain" Unix/X11 target like IRIX nothing renames
+   main() for us, and there's no real main() in libSDLmain to provide it
+   either (confirmed: ld32 reports libSDLmain.a "not used for resolving
+   any symbol" when linked on IRIX). Every other platform this codebase
+   targets (Mac/PPC) goes through the macro rename instead, so this must
+   stay opt-in via AA_GENERIC_UNIX_MAIN (set only by Build/IRIX-O2's
+   Makefile) -- defining a second, separately-named main() unconditionally
+   would collide with the macro-renamed one on those platforms. */
+int main(int argc, char *argv[])
+{
+    return SDL_main(argc, argv);
+}
+#endif

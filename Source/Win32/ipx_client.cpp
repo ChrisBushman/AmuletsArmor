@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include <string.h>
 #include "ipx_client.h"
 #include <time.h>
@@ -5,7 +6,16 @@
 #pragma pack(1)
 #endif
 
-#ifdef TARGET_UNIX
+#if defined(TARGET_UNIX) && defined(AA_REAL_SDL12)
+/* Real SDL 1.2 (e.g. Tigerbrew on PPC/Tiger) installs headers at the
+   classic bare path, not namespaced under SDL2/ like Homebrew's
+   sdl12-compat + SDL2 combo on modern macOS. SDL_net.h pulls in SDL.h
+   itself, so it needs the same WIN32-hiding as every other real-SDL-1.2
+   include site in this codebase (see Include/OPTIONS.H for why). */
+#undef WIN32
+#include <SDL_net.h>
+#define WIN32 1
+#elif defined(TARGET_UNIX)
 #include <SDL2/SDL_net.h>
 #else
 #include "SDL_net.h"

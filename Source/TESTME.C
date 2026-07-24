@@ -11,9 +11,19 @@
  *
  *<!-----------------------------------------------------------------------*/
 #include <ctype.h>
+#include <string.h>
 #if WIN32
 #include <conio.h>
+#ifdef TARGET_UNIX
+/* See Include/OPTIONS.H for why WIN32 must be hidden from SDL's own
+   headers here (WIN32 and TARGET_UNIX are both defined together on this
+   codebase's Apple/Unix builds; SDL_net.h pulls in SDL.h itself). */
+#undef WIN32
 #include <SDL_net.h>
+#define WIN32 1
+#else
+#include <SDL_net.h>
+#endif
 #endif
 #include "CLIENT.H"
 #include "CMDQUEUE.H"
@@ -36,6 +46,10 @@
 #include "VIEW.H"
 #ifdef WIN32
 #include "Win32/ipx_client.h"
+#endif
+#ifdef TARGET_UNIX
+extern void WindowsUpdateEvents(void) ;
+extern void WindowsUpdateMouse(void) ;
 #endif
 
 //#undef TRUE
@@ -105,7 +119,7 @@ static E_Boolean IShowScreen(
     MousePushEventHandler(IShowScreenNextPage);
 
     time = TickerGet() + timeout ;
-    p_bitmap = (T_bitmap *)PictureLockData(picName, &res) ;
+    p_bitmap = PictureLockDataAsBitmap(picName, &res) ;
     DebugCheck (p_bitmap!=NULL);
     if (p_bitmap)  {
         ViewSetPalette(pal) ;
@@ -300,6 +314,25 @@ extern void SleepMS(T_word32 sleepMS);
 
     DebugRoutine("main") ;
 
+    /* Strip --profile out of argv (wherever it appears) before the
+       positional IP-address/port parsing below sees argc/argv -- it's a
+       flag, not a positional argument.  See PERFPROF.H for what it turns
+       on. */
+    PerfProfInit() ;
+    {
+        T_word16 __ppArgOut = 1 ;
+        T_word16 __ppArgIn ;
+        for (__ppArgIn = 1; __ppArgIn < argc; __ppArgIn++)  {
+            if (strcmp(argv[__ppArgIn], "--profile") == 0)  {
+                PerfProfSetEnabled(TRUE) ;
+                puts("Performance profiling enabled (--profile).") ;
+            } else {
+                argv[__ppArgOut++] = argv[__ppArgIn] ;
+            }
+        }
+        argc = __ppArgOut ;
+    }
+
     ConfigOpen() ;
     ConfigLoad() ;
 
@@ -432,6 +465,19 @@ extern void SleepMS(T_word32 sleepMS);
     while (!SMMainIsDone())  {
         if ((TickerGet() - lastTick) < CAP_TICK_RATE) {
 #ifdef WIN32
+#ifdef TARGET_UNIX
+            /* Mouse/keyboard input is otherwise only sampled once per game
+               tick, deep inside WindowsUpdate() (called from ColorUpdate,
+               once per UpdateOften -- see main loop below). Between ticks
+               this branch used to just sleep, leaving input events queued
+               up unprocessed for however long the tick takes; on slower
+               hardware (or before the ResScaleUpdate blit optimizations)
+               that was tens of ms per tick, felt as real cursor lag. Poll
+               here too so input sampling isn't coupled to render/tick
+               throughput. */
+            WindowsUpdateEvents() ;
+            WindowsUpdateMouse() ;
+#endif
             SleepMS(1);
 #endif
         } else {
@@ -445,6 +491,7 @@ extern void SleepMS(T_word32 sleepMS);
             SMMainUpdate() ;
             DebugCompare("main") ;
             TICKER_TIME_ROUTINE_ENDM("main", 500) ;
+            PerfProfMaybeReport() ;
         }
     }
 

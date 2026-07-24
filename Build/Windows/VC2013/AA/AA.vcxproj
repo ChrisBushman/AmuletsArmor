@@ -664,7 +664,7 @@
     <ClInclude Include="..\..\..\..\Lib\SDL-1.2.15\include\SDL_version.h" />
     <ClInclude Include="..\..\..\..\Lib\SDL-1.2.15\include\SDL_video.h" />
     <ClInclude Include="..\..\..\..\Source\Win32\ipx_client.h" />
-    <ClInclude Include="DIRECT.H" />
+    <ClInclude Include="WINDIRECT.H" />
     <ClInclude Include="options.hpp" />
   </ItemGroup>
   <ItemGroup>

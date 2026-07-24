@@ -823,7 +823,7 @@
     <ClInclude Include="..\..\..\..\Lib\SDL-1.2.15\include\SDL_video.h">
       <Filter>Lib\SDL\include</Filter>
     </ClInclude>
-    <ClInclude Include="DIRECT.H">
+    <ClInclude Include="WINDIRECT.H">
       <Filter>Include</Filter>
     </ClInclude>
     <ClInclude Include="options.hpp">

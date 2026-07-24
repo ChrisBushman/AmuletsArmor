@@ -27,10 +27,10 @@
 #include <conio.h>
 #include <ctype.h>
 #include <string.h>
-#include "sos.h"
-#include "sosm.h"
-#include "sosez.h"
-#include "profile.h"
+#include "SOS.H"
+#include "SOSM.H"
+#include "SOSEZ.H"
+#include "PROFILE.H"
 
 /***************************************************************************
 

@@ -17,10 +17,12 @@
  * @{
  *
  *<!-----------------------------------------------------------------------*/
+#include <stddef.h>
 #include "MEMORY.H"
 #include "RESOURCE.H"
 #include "PICS.H"
 #include "TICKER.H"
+#include "ENDIAN_AA.H"
 
 /* The following is done to ensure that the resource looks for its */
 /* resources on the drive not just the resource. */
@@ -31,7 +33,7 @@
 #endif
 
 
-#include "iresourc.h"
+#include "IRESOURC.H"
 
 // Comment out the following define if you wish patches to be only read
 // if in they do not exist in the resource file.
@@ -142,14 +144,46 @@ static T_word16 ILoadResourceIndexUnix(
         memset(p_index, 0, sizeof(T_resourceEntry) * entriesToCopy) ;
 
         for (i=0; i<entriesToCopy; i++) {
-            memcpy(p_index[i].resID, p_diskIndex[i].resID, sizeof(p_index[i].resID)) ;
+            /* T_resourceEntryDisk32 is 41 bytes (per-field PACK, no
+               padding) -- not a multiple of 4, so for i>=1 a plain
+               p_diskIndex[i].fileOffset/.size/.lockCount member
+               dereference lands on a non-4-byte-aligned address (PACK
+               only tells the compiler a given *struct instance*'s own
+               fields may be unaligned relative to it, not that every
+               array-indexed instance's absolute address is safe to
+               dereference at its natural type width). Harmless on
+               x86/PPC, which tolerate unaligned scalar loads; MIPS
+               (SGI O2) does not and raises SIGBUS. memcpy is
+               alignment-agnostic regardless of target, so read every
+               multi-byte field that way instead of by direct
+               dereference -- matching the byte-array fields just below,
+               which were already memcpy'd for a different reason (no
+               single-instruction load exists for an array anyway). */
+            T_byte8 *p_entry = (T_byte8 *)p_diskIndex +
+                                ((size_t)i * sizeof(T_resourceEntryDisk32)) ;
+            T_word32 rawFileOffset, rawSize ;
+            T_word16 rawLockCount ;
+
+            memcpy(p_index[i].resID,
+                   p_entry + offsetof(T_resourceEntryDisk32, resID),
+                   sizeof(p_index[i].resID)) ;
             memcpy(p_index[i].p_resourceName,
-                   p_diskIndex[i].p_resourceName,
+                   p_entry + offsetof(T_resourceEntryDisk32, p_resourceName),
                    sizeof(p_index[i].p_resourceName)) ;
-            p_index[i].fileOffset = p_diskIndex[i].fileOffset ;
-            p_index[i].size = p_diskIndex[i].size ;
-            p_index[i].lockCount = p_diskIndex[i].lockCount ;
-            p_index[i].resourceType = p_diskIndex[i].resourceType ;
+            memcpy(&rawFileOffset,
+                   p_entry + offsetof(T_resourceEntryDisk32, fileOffset),
+                   sizeof(rawFileOffset)) ;
+            memcpy(&rawSize,
+                   p_entry + offsetof(T_resourceEntryDisk32, size),
+                   sizeof(rawSize)) ;
+            memcpy(&rawLockCount,
+                   p_entry + offsetof(T_resourceEntryDisk32, lockCount),
+                   sizeof(rawLockCount)) ;
+            p_index[i].fileOffset = EndianLE32(rawFileOffset) ;
+            p_index[i].size = EndianLE32(rawSize) ;
+            p_index[i].lockCount = EndianLE16(rawLockCount) ;
+            p_index[i].resourceType =
+                *(p_entry + offsetof(T_resourceEntryDisk32, resourceType)) ;
             p_index[i].p_data = NULL ;
             p_index[i].resourceFile = resourceFile ;
             p_index[i].ownerDir = NULL ;
@@ -240,6 +274,13 @@ T_resourceFile ResourceOpen(T_byte8 *filename)
 
         /* Now read in the resource file header. */
         FileRead(file, &resourceHeader, sizeof(T_resourceFileHeader)) ;
+
+        /* NOTE: uniqueID is a raw 4-byte tag ("Res!") compared via the same
+           reinterpret-cast idiom on both sides, so it is inherently
+           byte-order self-consistent and must NOT be swapped. */
+        resourceHeader.indexOffset = EndianLE32(resourceHeader.indexOffset) ;
+        resourceHeader.indexSize = EndianLE32(resourceHeader.indexSize) ;
+        resourceHeader.numEntries = EndianLE16(resourceHeader.numEntries) ;
 
         /* Check for the correct id */
         DebugCheck(resourceHeader.uniqueID == RESOURCE_FILE_UNIQUE_ID) ;
@@ -480,6 +521,30 @@ printf("!A 1 file_%s\n", JustEnd(p_resourceName));
     DebugEnd() ;
 
     return res ;
+}
+
+/*-------------------------------------------------------------------------*
+ * Routine:  ResourceIsFreshLoad
+ *-------------------------------------------------------------------------*/
+/**
+ *  See RESOURCE.H -- TRUE if this resource is currently on disk (i.e. the
+ *  next ResourceLock() call will read fresh bytes rather than return an
+ *  already-cached, already-fixed-up block).
+ *
+ *<!-----------------------------------------------------------------------*/
+E_Boolean ResourceIsFreshLoad(T_resource resource)
+{
+    T_resourceEntry *p_resource ;
+
+    DebugRoutine("ResourceIsFreshLoad") ;
+    DebugCheck(resource != RESOURCE_BAD) ;
+    p_resource = resource ;
+
+    DebugEnd() ;
+
+    return (E_Boolean)((p_resource->resourceType &
+                         RESOURCE_ENTRY_TYPE_MASK_WHERE) ==
+                        RESOURCE_ENTRY_TYPE_DISK) ;
 }
 
 /*-------------------------------------------------------------------------*
@@ -878,6 +943,13 @@ static T_resourceDirInfo *IDirLock(T_resource dir)
                         file,
                         &header,
                         sizeof(header)) ;
+
+                    /* uniqueID is a raw 4-byte tag compared via the same
+                       reinterpret-cast idiom on both sides -- must NOT be
+                       swapped (see the matching comment in ResourceOpen). */
+                    header.indexOffset = EndianLE32(header.indexOffset) ;
+                    header.indexSize = EndianLE32(header.indexSize) ;
+                    header.numEntries = EndianLE16(header.numEntries) ;
 
                     /* This better be correct. */
                     DebugCheck(header.uniqueID == RESOURCE_FILE_UNIQUE_ID) ;

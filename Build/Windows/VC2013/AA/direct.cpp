@@ -2,7 +2,16 @@
 extern "C" {
 #endif
 
+/* See Include/OPTIONS.H for why WIN32 must be hidden from SDL's own
+   headers here (WIN32 and TARGET_UNIX are both defined together on this
+   codebase's Apple/Unix builds). */
+#ifdef TARGET_UNIX
+#undef WIN32
 #include <SDL.h>
+#define WIN32 1
+#else
+#include <SDL.h>
+#endif
 #include "GENERAL.H"
 #include "KEYBOARD.H"
 #include "MOUSEMOD.H"
@@ -13,10 +22,20 @@ static T_word16 G_mouseY = 0 ;
 
 T_void DirectMouseSet(T_word16 newX, T_word16 newY)
 {
-#ifndef TARGET_UNIX
+    /* newX/newY arrive in the raw window/logical coordinate space, which
+       is always 2x the game's own 320x200 UI space (Windows: a hardcoded
+       640x400 window; Unix: RESSCALE's logical surface, LOGICAL_W/H =
+       320/200 * VIEW3D_SCALE, VIEW3D_SCALE == 2 -- see 3D_VIEW.H). Halve
+       unconditionally so the clamp below (and G_mouseX/Y generally)
+       operate in the UI's actual coordinate space; this used to be
+       skipped on TARGET_UNIX, which was correct back when the Unix
+       logical surface was still 320x200, but left every position past
+       the window's horizontal/vertical midpoint clamped to 319/199
+       instead of continuing to the true edge once VIEW3D_SCALE made it
+       640x400 too (visible as the cursor appearing to lag behind /
+       "fall off" near the bottom and right edges). */
 newX >>= 1;
-newY >>= 1; // scale for large screen
-#endif
+newY >>= 1;
 #ifdef TARGET_UNIX
     /* In mouselook (relative mode), don't update cursor position from
      * absolute OS coords — the in-game cursor must stay fixed. */

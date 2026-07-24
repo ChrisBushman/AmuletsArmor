@@ -23,6 +23,7 @@
 #include "SYNCTIME.H"
 #include "VIEW.H"
 #include "VIEWFILE.H"
+#include "ENDIAN_AA.H"
 
 #ifdef TARGET_UNIX
 #include <stddef.h>
@@ -120,13 +121,33 @@ typedef struct {
  *      frame.
  *
  *<!-----------------------------------------------------------------------*/
+/* 9 bytes (1 + 2*4), an odd size -- array-indexed instances
+   (stances[n].frame[m]) alternate 2-byte alignment parity with every
+   other element, AND stanceOffsetFrameList/offsetPicList are arbitrary
+   byte offsets straight from 1996-era disk data with no guaranteed
+   parity, so a T_objectFrame instance's fields can land at a genuinely
+   odd address (not just non-4-byte-aligned). PACK_STRUCT (whole-type
+   aligned(1), see GENERAL.H) is not enough on its own to fix this --
+   confirmed on the SGI O2's GCC 4.5.2, which still emits a plain
+   (alignment-requiring) load/store for at least some PACK_STRUCT'd
+   4-byte fields (T_objectType's lockCount/script). Given that
+   inconsistency, every direct ->offsetPicList / ->soundNum /
+   ->soundRadius / ->objectAttributes access in this file goes through
+   the Get/Set macros below instead of trusting the attribute. */
 typedef struct {
     T_byte8 numAngles                       PACK ;
     T_word16 offsetPicList                  PACK ;
     T_word16 soundNum     /* 0 = no sound */PACK ;
     T_word16 soundRadius                    PACK ;
     T_word16 objectAttributes               PACK ;
-} T_objectFrame ;
+} PACK_STRUCT T_objectFrame ;
+
+#define ObjFrameGetOffsetPicList(p_frame)      (AlignedGetW16(&(p_frame)->offsetPicList))
+#define ObjFrameSetOffsetPicList(p_frame, v)   (AlignedSetW16(&(p_frame)->offsetPicList, (v)))
+#define ObjFrameGetSoundNum(p_frame)           (AlignedGetW16(&(p_frame)->soundNum))
+#define ObjFrameGetSoundRadius(p_frame)        (AlignedGetW16(&(p_frame)->soundRadius))
+#define ObjFrameGetObjectAttributes(p_frame)   (AlignedGetW16(&(p_frame)->objectAttributes))
+#define ObjFrameSetObjectAttributes(p_frame, v) (AlignedSetW16(&(p_frame)->objectAttributes, (v)))
 
 /*-------------------------------------------------------------------------*
  * Typedef:  T_objectPic
@@ -142,10 +163,22 @@ typedef struct {
  *      NULL when not locked in memory.
  *
  *<!-----------------------------------------------------------------------*/
+/* Not PACK'd (unlike the genuine on-disk format, T_objectPicDisk32 just
+   below): this is a purely in-memory, heap-allocated struct built by
+   expanding the disk format's 32-bit fields, never fread/fwritten
+   directly. PACK is a GCC-only attribute (a no-op under MSVC, where
+   Windows achieves the same on-disk packing via a project-wide
+   StructMemberAlignment setting instead), so it was only ever taking
+   effect on GCC/Clang -- where letting the compiler apply natural
+   alignment matters: with number (2 bytes) packed ahead of two
+   pointer-sized fields, array-indexed instances (p_picList[i]) land
+   `resource`/`p_pic` at addresses a strict-alignment CPU (MIPS, e.g.
+   the SGI O2 port) faults on with SIGBUS; x86/PPC just tolerated the
+   same unaligned accesses silently. */
 typedef struct {
-    T_sword16 number                          PACK ;
-    T_resource resource                       PACK ;
-    T_void *p_pic                             PACK;
+    T_sword16 number ;
+    T_resource resource ;
+    T_void *p_pic ;
 } T_objectPic ;
 
 #ifdef TARGET_UNIX
@@ -171,6 +204,16 @@ typedef struct {
  *      to keep as much art in memory as possible.
  *
  *<!-----------------------------------------------------------------------*/
+/* numStances (2 bytes) sits ahead of lockCount/script (4 bytes each) in
+   this packed, on-disk-format-matching layout, so those two fields land
+   at a permanently 2-mod-4 byte offset -- not just for some array-
+   indexed instances (there's only ever one T_objectType per allocation),
+   but for every single instance, regardless of how well-aligned the
+   allocation itself is. A direct 4-byte access to either (as this file
+   does throughout, e.g. p_type->lockCount++) faults with SIGBUS on
+   strict-alignment targets (e.g. the SGI O2/MIPS port); PACK_STRUCT
+   (see GENERAL.H) fixes this the same way as T_objectFrame above,
+   without having to rewrite every access site. */
 typedef struct {
     T_word16 numStances               PACK ;
     T_word32 lockCount                PACK ;
@@ -182,7 +225,7 @@ typedef struct {
     T_word16 health                   PACK ;
     T_word16 objMoveAttr              PACK ;
     T_objectStance stances[1]         PACK ;
-} T_objectType ;
+} PACK_STRUCT T_objectType ;
 
 #ifdef TARGET_UNIX
 static E_Boolean IObjTypeRangeOk(T_word32 offset, T_word32 sizeNeeded, T_word32 totalSize)
@@ -217,22 +260,31 @@ static T_objectType *IObjTypeExpandForUnix(T_objectType *p_typeDisk, T_word32 si
     if (IObjTypeRangeOk(0, stanceBase + sizeof(T_objectStance), sizeObjType) == FALSE)
         return NULL ;
 
-    for (stanceNum = 0 ; stanceNum < p_typeDisk->numStances ; stanceNum++)  {
+    /* NOTE: p_typeDisk is a live resource-cache buffer that may be reused
+       across multiple locks, so it is never mutated in place here -- every
+       multi-byte field read from it (or from p_src/p_stance/p_frame, which
+       alias it) goes through EndianLE so a big-endian host still computes
+       the right offsets/counts. */
+    for (stanceNum = 0 ; stanceNum < EndianLE16(p_typeDisk->numStances) ; stanceNum++)  {
         T_word32 stanceOffset = stanceBase + (stanceNum * sizeof(T_objectStance)) ;
         T_objectStance *p_stance ;
+        T_word16 stanceNumFrames, stanceOffsetFrameList ;
 
         if (IObjTypeRangeOk(stanceOffset, sizeof(T_objectStance), sizeObjType) == FALSE)
             break ;
         p_stance = (T_objectStance *)(p_src + stanceOffset) ;
+        stanceNumFrames = EndianLE16(p_stance->numFrames) ;
+        stanceOffsetFrameList = EndianLE16(p_stance->offsetFrameList) ;
 
-        if (IObjTypeRangeOk(p_stance->offsetFrameList,
-                            ((T_word32)p_stance->numFrames) * sizeof(T_objectFrame),
+        if (IObjTypeRangeOk(stanceOffsetFrameList,
+                            ((T_word32)stanceNumFrames) * sizeof(T_objectFrame),
                             sizeObjType) == FALSE)
             continue ;
 
-        for (frameNum = 0 ; frameNum < p_stance->numFrames ; frameNum++)  {
-            T_objectFrame *p_frame = (T_objectFrame *)(p_src + p_stance->offsetFrameList +
+        for (frameNum = 0 ; frameNum < stanceNumFrames ; frameNum++)  {
+            T_objectFrame *p_frame = (T_objectFrame *)(p_src + stanceOffsetFrameList +
                                        (frameNum * sizeof(T_objectFrame))) ;
+            /* numAngles is a single byte -- no swap needed. */
             if ((p_frame->numAngles == 1) ||
                 (p_frame->numAngles == 4) ||
                 (p_frame->numAngles == 8))
@@ -253,11 +305,42 @@ static T_objectType *IObjTypeExpandForUnix(T_objectType *p_typeDisk, T_word32 si
     memset(p_copy, 0, newSize) ;
     memcpy(p_copy, p_typeDisk, sizeObjType) ;
 
-    writeOffset = sizeObjType ;
+    /* p_copy is a byte-for-byte copy of the disk data at this point, so
+       its header is still little-endian -- fix it up once, in place, since
+       from here on p_copy is used as a normal host-native structure.
+       Swap in place via EndianLE16P/EndianLE32P (memcpy-based) rather
+       than a direct `field = EndianLE16(field)` assignment: lockCount
+       and script sit at a permanently misaligned offset in this packed
+       layout (see the comment on T_objectType above), and a plain
+       struct-member write-back of the swapped value has been confirmed
+       to fault with SIGBUS on the SGI O2's GCC 4.5.2 even though the
+       PACK_STRUCT-attributed read on the right-hand side is safe. */
+    EndianLE16P(&p_copy->numStances) ;
+    EndianLE32P(&p_copy->lockCount) ;
+    EndianLE16P(&p_copy->radius) ;
+    EndianLE16P(&p_copy->attributes) ;
+    EndianLE16P(&p_copy->weight) ;
+    EndianLE16P(&p_copy->value) ;
+    EndianLE32P(&p_copy->script) ;
+    EndianLE16P(&p_copy->health) ;
+    EndianLE16P(&p_copy->objMoveAttr) ;
+
+    /* T_objectPic (unpacked -- see its own comment above) needs 4-byte
+       alignment for its pointer members, but sizeObjType is an arbitrary
+       on-disk byte count with no alignment guarantee of its own, and the
+       whole point of writeOffset is that it becomes the byte offset (from
+       p_copy) of the first T_objectPic written below. Round up so every
+       p_picDst instance actually lands on a 4-byte boundary -- confirmed
+       necessary (not just theoretical): this is what was faulting with
+       SIGBUS on the SGI O2/MIPS port when sizeObjType was odd. The 4096-
+       byte floor on extraBytes above leaves comfortably more slack than
+       the <=3 bytes this can add. */
+    writeOffset = (sizeObjType + 3) & ~((T_word32)3) ;
     for (stanceNum = 0 ; stanceNum < p_copy->numStances ; stanceNum++)  {
         T_word32 stanceOffset = stanceBase + (stanceNum * sizeof(T_objectStance)) ;
         T_objectStance *p_stanceDst ;
         T_objectStance *p_stanceSrc ;
+        T_word16 stanceNumFrames, stanceOffsetFrameList ;
 
         if (IObjTypeRangeOk(stanceOffset, sizeof(T_objectStance), sizeObjType) == FALSE)
             break ;
@@ -265,16 +348,35 @@ static T_objectType *IObjTypeExpandForUnix(T_objectType *p_typeDisk, T_word32 si
         p_stanceDst = (T_objectStance *)(((T_byte8 *)p_copy) + stanceOffset) ;
         p_stanceSrc = (T_objectStance *)(p_src + stanceOffset) ;
 
-        if (IObjTypeRangeOk(p_stanceSrc->offsetFrameList,
-                            ((T_word32)p_stanceSrc->numFrames) * sizeof(T_objectFrame),
+        /* p_stanceDst still holds the raw little-endian copy -- fix it up
+           in place; from here on p_stanceDst reads as host-native.
+           EndianLE16P (memcpy-based swap-in-place) rather than a direct
+           `field = EndianLE16(field)` assignment -- see the comment on
+           the p_copy header fixup above for why the plain-assignment
+           form isn't safe here. */
+        EndianLE16P(&p_stanceDst->numFrames) ;
+        EndianLE16P(&p_stanceDst->speed) ;
+        EndianLE16P(&p_stanceDst->type) ;
+        EndianLE16P(&p_stanceDst->nextStance) ;
+        EndianLE16P(&p_stanceDst->offsetFrameList) ;
+
+        /* p_stanceSrc aliases the untouched, possibly-shared resource
+           cache buffer, so read it through EndianLE without mutating it. */
+        stanceNumFrames = EndianLE16(p_stanceSrc->numFrames) ;
+        stanceOffsetFrameList = EndianLE16(p_stanceSrc->offsetFrameList) ;
+
+        if (IObjTypeRangeOk(stanceOffsetFrameList,
+                            ((T_word32)stanceNumFrames) * sizeof(T_objectFrame),
                             sizeObjType) == FALSE)
             continue ;
 
-        for (frameNum = 0 ; frameNum < p_stanceSrc->numFrames ; frameNum++)  {
-            T_objectFrame *p_frameSrc = (T_objectFrame *)(p_src + p_stanceSrc->offsetFrameList +
+        for (frameNum = 0 ; frameNum < stanceNumFrames ; frameNum++)  {
+            T_objectFrame *p_frameSrc = (T_objectFrame *)(p_src + stanceOffsetFrameList +
                                         (frameNum * sizeof(T_objectFrame))) ;
             T_objectFrame *p_frameDst = (T_objectFrame *)(((T_byte8 *)p_copy) + p_stanceDst->offsetFrameList +
                                         (frameNum * sizeof(T_objectFrame))) ;
+            T_word16 frameSrcOffsetPicList = EndianLE16R(&p_frameSrc->offsetPicList) ;
+            /* numAngles is a single byte -- no swap needed. */
             T_word32 angles = p_frameSrc->numAngles ;
             T_word32 picNum ;
 
@@ -286,22 +388,30 @@ static T_objectType *IObjTypeExpandForUnix(T_objectType *p_typeDisk, T_word32 si
             if (writeOffset > 0xFFFF)
                 break ;
 
+            /* soundNum/soundRadius/objectAttributes are carried over
+               verbatim from the memcpy above and still little-endian.
+               EndianLE16P rather than direct assignment -- same reason
+               as the p_copy/p_stanceDst fixups above. */
+            EndianLE16P(&p_frameDst->soundNum) ;
+            EndianLE16P(&p_frameDst->soundRadius) ;
+            EndianLE16P(&p_frameDst->objectAttributes) ;
+
             p_frameDst->numAngles = (T_byte8)angles ;
-            p_frameDst->offsetPicList = (T_word16)writeOffset ;
+            AlignedSetW16(&p_frameDst->offsetPicList, (T_word16)writeOffset) ;
 
             for (picNum = 0 ; picNum < angles ; picNum++)  {
                 T_objectPic *p_picDst = (T_objectPic *)(((T_byte8 *)p_copy) + writeOffset +
                                       (picNum * sizeof(T_objectPic))) ;
                 T_objectPicDisk32 *p_picSrc = NULL ;
 
-                if (IObjTypeRangeOk(p_frameSrc->offsetPicList + (picNum * sizeof(T_objectPicDisk32)),
+                if (IObjTypeRangeOk(frameSrcOffsetPicList + (picNum * sizeof(T_objectPicDisk32)),
                                     sizeof(T_objectPicDisk32),
                                     sizeObjType))
-                    p_picSrc = (T_objectPicDisk32 *)(p_src + p_frameSrc->offsetPicList +
+                    p_picSrc = (T_objectPicDisk32 *)(p_src + frameSrcOffsetPicList +
                               (picNum * sizeof(T_objectPicDisk32))) ;
 
                 if (p_picSrc != NULL)
-                    p_picDst->number = p_picSrc->number ;
+                    p_picDst->number = EndianLES16R(&p_picSrc->number) ;
                 else
                     p_picDst->number = -1 ;
 
@@ -485,7 +595,7 @@ T_objTypeInstance ObjTypeCreate(T_word16 objTypeNum, T_3dObject *p_obj)
 
         /* See if we need to lock the object type pictures into memory. */
 //printf("Lock count: %d\n", p_type->lockCount) ;
-        if (p_type->lockCount == 0)  {
+        if (AlignedGetW32(&p_type->lockCount) == 0)  {
             /* Go through and lock them all in. */
 #if 0
             if (!(p_type->attributes & OBJECT_ATTR_PIECE_WISE))
@@ -504,7 +614,7 @@ T_objTypeInstance ObjTypeCreate(T_word16 objTypeNum, T_3dObject *p_obj)
 
         /* Increment the lock count.  This is necessary for determining */
         /* when to unlock all the object type pictures. */
-        p_type->lockCount++ ;
+        AlignedSetW32(&p_type->lockCount, AlignedGetW32(&p_type->lockCount) + 1) ;
 
         /** Clear out the current sound handle. **/
         p_objType->currSound = AREA_SOUND_BAD;
@@ -560,14 +670,14 @@ T_void ObjTypeDestroy(T_objTypeInstance objTypeInst)
     DebugCheck(p_type != NULL) ;
 
     /* Decrement the lock count. */
-    p_type->lockCount-- ;
+    AlignedSetW32(&p_type->lockCount, AlignedGetW32(&p_type->lockCount) - 1) ;
 //printf("Lock count now: %d\n", p_type->lockCount) ;
 
     /* Make sure we didn't roll under. */
-    DebugCheck(p_type->lockCount != ((T_word32)-1)) ;
+    DebugCheck(AlignedGetW32(&p_type->lockCount) != ((T_word32)-1)) ;
 
     /* Is the lock count now zero? */
-    if (p_type->lockCount == 0)  {
+    if (AlignedGetW32(&p_type->lockCount) == 0)  {
         /* Yes.  We are now free to release this object type structure and */
         /* all the pictures.  */
         /* If this is a piecewise object, don't unlock the resources */
@@ -847,7 +957,7 @@ static T_void IObjTypeUpdateFrameChanges (T_objTypeInstanceStruct *p_objType)
 #endif
 
    /** Is there an attribute change? **/
-   attribs = p_frame[p_objType->frameNumber].objectAttributes ;
+   attribs = ObjFrameGetObjectAttributes(&p_frame[p_objType->frameNumber]) ;
    if (attribs != 0)
    {
        if (attribs & OBJECT_ATTR_MARK_FOR_DESTROY)
@@ -1004,7 +1114,7 @@ T_void *ObjTypeGetPicture(
     /* Get a pointer to the picture list. */
     p_pic = (T_objectPic *)
                  (&((T_byte8 *)p_type)
-                     [p_frame[p_objType->frameNumber].offsetPicList]) ;
+                     [ObjFrameGetOffsetPicList(&p_frame[p_objType->frameNumber])]) ;
 
     /* Determine the angle lookup. */
     if (p_frame->numAngles == 8)  {
@@ -1149,7 +1259,7 @@ static T_void IObjTypeLock(T_objectType *p_type, T_word16 typeNumber, T_word32 t
 
     /* All objects will have a radius of at least 5 */
     if (p_type->radius < 5)
-        p_type->radius = 5 ;
+        AlignedSetW16(&p_type->radius, 5) ;
 //printf("\nLocking type %d  %p  %d\n", typeNumber, p_type, G_frameResolution) ;
 /*
 printf("\nLocking type %d  %p\n", typeNumber, p_type) ;
@@ -1208,18 +1318,18 @@ fflush(stdout) ;
 //printf("frame: %d\n", frameNum) ;  fflush(stdout);
              /* Find the appropriate picture list. */
              p_picList = (T_objectPic *)
-                             (&(((T_byte8 *)p_type)[p_frame->offsetPicList])) ;
+                             (&(((T_byte8 *)p_type)[ObjFrameGetOffsetPicList(p_frame)])) ;
              p_picListLookup = (T_objectPic *)
-                             (&(((T_byte8 *)p_type)[p_frameLookup->offsetPicList])) ;
+                             (&(((T_byte8 *)p_type)[ObjFrameGetOffsetPicList(p_frameLookup)])) ;
 
 #ifdef TARGET_UNIX
              if (IObjTypeRangeOk(
-                     p_frame->offsetPicList,
+                     ObjFrameGetOffsetPicList(p_frame),
                      ((T_word32)p_frame->numAngles) * sizeof(T_objectPic),
                      typeSize) == FALSE)
                  continue ;
              if (IObjTypeRangeOk(
-                     p_frameLookup->offsetPicList,
+                     ObjFrameGetOffsetPicList(p_frameLookup),
                      ((T_word32)p_frameLookup->numAngles) * sizeof(T_objectPic),
                      typeSize) == FALSE)
                  continue ;
@@ -1306,7 +1416,8 @@ fflush(stdout) ;
                       (&(((T_byte8 *)p_type)[p_stance->offsetFrameList])) ;
         for (frameNum = 4; frameNum < p_stance->numFrames; frameNum++)  {
             p_frame = p_frameList + frameNum ;
-            p_frame->objectAttributes |= OBJECT_ATTR_MARK_FOR_DESTROY ;
+            AlignedSetW16(&p_frame->objectAttributes,
+                AlignedGetW16(&p_frame->objectAttributes) | OBJECT_ATTR_MARK_FOR_DESTROY) ;
         }
     }
 #endif
@@ -1348,7 +1459,7 @@ static T_void IObjTypeUnlock(T_objectType *p_type)
              frameNum++, p_frame++)  {
              /* Find the appropriate picture list. */
              p_pic = (T_objectPic *)
-                             (&((T_byte8 *)p_type)[p_frame->offsetPicList]) ;
+                             (&((T_byte8 *)p_type)[ObjFrameGetOffsetPicList(p_frame)]) ;
 
              for (picNum=0 ;
                   picNum < p_frame->numAngles;
@@ -1466,7 +1577,7 @@ T_word32 ObjTypeGetScript(T_objTypeInstance objTypeInst)
     DebugCheck((T_objTypeInstanceStruct *)objTypeInst != NULL) ;
     DebugCheck(((T_objTypeInstanceStruct *)objTypeInst)->p_objectType != NULL) ;
 
-    return ((T_objTypeInstanceStruct *)objTypeInst)->p_objectType->script ;
+    return AlignedGetW32(&((T_objTypeInstanceStruct *)objTypeInst)->p_objectType->script) ;
 }
 
 /*-------------------------------------------------------------------------*
@@ -1485,7 +1596,7 @@ T_void ObjTypeSetScript(T_objTypeInstance objTypeInst, T_word32 script)
     DebugCheck((T_objTypeInstanceStruct *)objTypeInst != NULL) ;
     DebugCheck(((T_objTypeInstanceStruct *)objTypeInst)->p_objectType != NULL) ;
 
-    ((T_objTypeInstanceStruct *)objTypeInst)->p_objectType->script = script ;
+    AlignedSetW32(&((T_objTypeInstanceStruct *)objTypeInst)->p_objectType->script, script) ;
 }
 
 
@@ -1603,12 +1714,12 @@ T_void ObjTypePrint(FILE *fp, T_objTypeInstance objTypeInst)
 
     fprintf(fp, "  p_objectType: %p\n", p_type) ;
     fprintf(fp, "    numStances: %d\n", p_type->numStances) ;
-    fprintf(fp, "    lockCount:  %d\n", p_type->lockCount) ;
+    fprintf(fp, "    lockCount:  %d\n", AlignedGetW32(&p_type->lockCount)) ;
     fprintf(fp, "    radius:     %d\n", p_type->radius) ;
     fprintf(fp, "    attributes: %d\n", p_type->attributes) ;
     fprintf(fp, "    weight:     %d\n", p_type->weight) ;
     fprintf(fp, "    value:      %d\n", p_type->value) ;
-    fprintf(fp, "    script:     %ld\n", p_type->script) ;
+    fprintf(fp, "    script:     %ld\n", (long)AlignedGetW32(&p_type->script)) ;
     fprintf(fp, "    health:     %d\n", p_type->health) ;
     fprintf(fp, "    objMoveAttr:%d\n\n", p_type->objMoveAttr) ;
 
@@ -1631,13 +1742,13 @@ T_void ObjTypePrint(FILE *fp, T_objTypeInstance objTypeInst)
              frameNum++, p_frame++)  {
              fprintf(fp, "        frame %d\n", frameNum) ;
              fprintf(fp, "          numAng:    %d\n", p_frame->numAngles) ;
-             fprintf(fp, "          offsetPic: %d\n", p_frame->offsetPicList) ;
-             fprintf(fp, "          soundNum:  %d\n", p_frame->soundNum) ;
-             fprintf(fp, "          soundRad:  %d\n", p_frame->soundRadius) ;
-             fprintf(fp, "          objAttr:   %d\n", p_frame->objectAttributes) ;
+             fprintf(fp, "          offsetPic: %d\n", ObjFrameGetOffsetPicList(p_frame)) ;
+             fprintf(fp, "          soundNum:  %d\n", ObjFrameGetSoundNum(p_frame)) ;
+             fprintf(fp, "          soundRad:  %d\n", ObjFrameGetSoundRadius(p_frame)) ;
+             fprintf(fp, "          objAttr:   %d\n", ObjFrameGetObjectAttributes(p_frame)) ;
              /* Find the appropriate picture list. */
              p_pic = (T_objectPic *)
-                             (&(((T_byte8 *)p_type)[p_frame->offsetPicList])) ;
+                             (&(((T_byte8 *)p_type)[ObjFrameGetOffsetPicList(p_frame)])) ;
 
              /* Only 1, 4, or 8 angles per frame. */
              DebugCheck((p_frame->numAngles == 1) ||
@@ -1723,7 +1834,7 @@ static T_void IObjTypeFreePieces(T_objectType *p_type)
              frameNum++, p_frame++)  {
              /* Find the appropriate picture list. */
              p_pic = (T_objectPic *)
-                             (&((T_byte8 *)p_type)[p_frame->offsetPicList]) ;
+                             (&((T_byte8 *)p_type)[ObjFrameGetOffsetPicList(p_frame)]) ;
 
              for (picNum=0 ;
                   picNum < p_frame->numAngles;
@@ -1804,9 +1915,9 @@ T_void ObjTypeRebuildPieces(T_objTypeInstance objTypeInst)
 
              /* Find the appropriate picture list. */
              p_picList = (T_objectPic *)
-                             (&(((T_byte8 *)p_type)[p_frame->offsetPicList])) ;
+                             (&(((T_byte8 *)p_type)[ObjFrameGetOffsetPicList(p_frame)])) ;
              p_picListLookup = (T_objectPic *)
-                             (&(((T_byte8 *)p_type)[p_frameLookup->offsetPicList])) ;
+                             (&(((T_byte8 *)p_type)[ObjFrameGetOffsetPicList(p_frameLookup)])) ;
 
              /* Only 1, 4, or 8 angles per frame. */
              DebugCheck((p_frameLookup->numAngles == 1) ||
@@ -2000,10 +2111,19 @@ static T_void IOverlayPicture(T_byte8 *p_picture, T_byte8 *p_workArea)
     DebugCheck(p_picture != NULL) ;
     DebugCheck(p_workArea != NULL) ;
 
-    /* Keep overlaying until we find the end marker. */
-    while (*((T_word16 *)p_picture) != 0xFFFF)  {
+    /* Keep overlaying until we find the end marker. p_picture is a
+       disk-loaded resource (a body part's compressed picture, from
+       PictureLock -- see IBuildView) read as a raw little-endian dump,
+       same as every other on-disk struct in this codebase, but this
+       specific "pos" field was never being byte-swapped at all (a real,
+       separate endian gap from the alignment issue below -- found while
+       auditing this function for the latter). p_picture also advances by
+       a data-dependent count each iteration, so it's frequently
+       misaligned too; EndianLE16R covers both by reading through memcpy
+       and swapping the result. */
+    while (EndianLE16R(p_picture) != 0xFFFF)  {
         /* Get the position withing the 64x64 bitmap. */
-        pos = *((T_word16 *)p_picture) ;
+        pos = EndianLE16R(p_picture) ;
         p_picture += 2 ;
 
         /* Get the count of bytes to copy. */
@@ -2082,8 +2202,12 @@ static T_byte8 *ICompressPicture(T_byte8 *p_picture)
             linesize = 0 ;
         }
 
-        /* Store this table entry. */
-        table[yy].offset = offset ;
+        /* Store this table entry. offset is stored little-endian, matching
+           genuine on-disk .CPC picture resources (see T_pictureRaster /
+           T_compressEntry) -- IDrawObjectColumn and friends un-swap it
+           unconditionally on read, regardless of whether the picture came
+           from disk or was composited here at runtime. */
+        table[yy].offset = EndianLE16(offset) ;
         table[yy].start = (T_byte8)xx1 ;
         table[yy].end = (T_byte8)xx2 ;
 
@@ -2249,7 +2373,7 @@ T_void *ObjTypeGetFrontFirstPicture(T_objTypeInstance objTypeInst)
     /* Get a pointer to the picture list. */
     p_pic = (T_objectPic *)
                  (&((T_byte8 *)p_type)
-                     [p_frame[0].offsetPicList]) ;
+                     [ObjFrameGetOffsetPicList(&p_frame[0])]) ;
 
     /* Get the pointer to the artwork for the first angle. */
     p_picture = p_pic->p_pic ;

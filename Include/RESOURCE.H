@@ -27,6 +27,15 @@ T_void *ResourceLock(T_resource resource) ;
 
 T_void ResourceUnlock(T_resource resource) ;
 
+/* TRUE if the next ResourceLock() call on this resource will actually
+   read fresh bytes off disk (as opposed to returning an already-cached
+   block).  Callers that need to fix up an on-disk struct's byte order
+   exactly once -- not on every lock, since later locks are cache hits on
+   already-fixed-up memory -- must check this *before* calling
+   ResourceLock(), which flips the resource to "in memory" as a side
+   effect of loading it. */
+E_Boolean ResourceIsFreshLoad(T_resource resource) ;
+
 T_word32 ResourceGetSize(T_resource resource) ;
 
 T_byte8 *ResourceGetName(T_void *p_data) ;

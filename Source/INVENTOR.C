@@ -28,6 +28,7 @@
 #include "SPELLS.H"
 #include "STATS.H"
 #include "TXTBOX.H"
+#include "ENDIAN_AA.H"
 
 //static T_word16  G_inventoryWindowX1=213;
 //static T_word16  G_inventoryWindowX2=315;
@@ -166,7 +167,7 @@ static T_void IInventoryDecodeItemDesc(
     DebugEnd();
 }
 
-static T_void IInventoryRepairLegacySavedItemDesc(T_inventoryItemStruct *p_item)
+static T_void IInventoryRepairLegacySavedItemDesc(T_inventoryItemDiskStruct *p_item)
 {
     T_byte8 *p_raw;
     size_t useableOffset;
@@ -1628,11 +1629,11 @@ E_Boolean InventoryThrowObjectIntoWorld (T_word16 x, T_word16 y)
             DebugCheck (p_object != NULL);
 
             /** Throw speed is based on the height of the mouse cursor. **/
-            throwspeed=VIEW3D_HEIGHT - (y >> 1);
+            throwspeed=(VIEW3D_HEIGHT/VIEW3D_SCALE) - (y >> 1);
             if (throwspeed<10) throwspeed = 10;
 
             /** Throw angle is based on the x of the mouse cursor. **/
-            throwangle = (((VIEW3D_CLIP_RIGHT-VIEW3D_CLIP_LEFT+1)/2) - x) << 6;
+            throwangle = (((VIEW3D_CLIP_RIGHT-VIEW3D_CLIP_LEFT+1)/(2*VIEW3D_SCALE)) - x) << 6;
 
             /** Add it to my angle to get the absolute angle. **/
             throwangle += PlayerGetAngle ();
@@ -3486,24 +3487,65 @@ T_void InventoryPlayWeaponHitSound(T_void)
 
 
 
+/* Saved inventory records are a raw little-endian struct dump, appended to
+   the character save file after T_playerStats.  Fix up byte order in
+   place; byte fields (grid position, page, texture-derived counts) need
+   no swap. */
+static T_void ISwapInventoryItem(T_inventoryItemDiskStruct *p_item)
+{
+    T_word16 i, j ;
+
+    p_item->locx = EndianLE16(p_item->locx) ;
+    p_item->locy = EndianLE16(p_item->locy) ;
+    p_item->picwidth = EndianLE16(p_item->picwidth) ;
+    p_item->picheight = EndianLE16(p_item->picheight) ;
+    p_item->objecttype = EndianLE32(p_item->objecttype) ;
+
+    for (i=0; i<MAX_ITEM_EFFECTS; i++)
+        for (j=0; j<3; j++)
+            p_item->itemdesc.effectData[i][j] =
+                EndianLE16(p_item->itemdesc.effectData[i][j]) ;
+    p_item->itemdesc.useable = EndianLE16(p_item->itemdesc.useable) ;
+}
+
+/* object, p_bitmap, and elementID are always regenerated after a read (see
+   InventoryReadItemsList below) and never trusted from disk, so the disk
+   record carries reserved placeholders instead -- nothing to copy for
+   those fields here. */
+static T_void IInventoryItemFromDisk(
+                  T_inventoryItemStruct *p_out,
+                  T_inventoryItemDiskStruct *p_disk)
+{
+    memset(p_out, 0, sizeof(*p_out)) ;
+    p_out->locx = p_disk->locx ;
+    p_out->locy = p_disk->locy ;
+    p_out->picwidth = p_disk->picwidth ;
+    p_out->picheight = p_disk->picheight ;
+    p_out->gridstartx = p_disk->gridstartx ;
+    p_out->gridstarty = p_disk->gridstarty ;
+    p_out->gridspacesx = p_disk->gridspacesx ;
+    p_out->gridspacesy = p_disk->gridspacesy ;
+    p_out->objecttype = p_disk->objecttype ;
+    p_out->storepage = p_disk->storepage ;
+    p_out->numitems = p_disk->numitems ;
+    p_out->itemdesc = p_disk->itemdesc ;
+    p_out->elementID = DOUBLE_LINK_LIST_ELEMENT_BAD ;
+}
+
 /* routine reads inventory items into active inventory structure */
 
 T_void InventoryReadItemsList(FILE *fp)
 {
     T_inventoryItemStruct *p_inv;
-    T_inventoryItemStruct blank;
+    T_inventoryItemDiskStruct diskItem;
     T_word32 size;
     T_word16 i;
-    T_word16 cntr=0;
 
     DebugRoutine ("InventoryReadPlayerItemsList");
     DebugCheck (fp != NULL);
 
     /* calculate size of record */
-    size=sizeof(T_inventoryItemStruct);
-
-    /* clean out a 'blank' structure for compare */
-    memset (&blank,0,size);
+    size=sizeof(T_inventoryItemDiskStruct);
 
     /* Remove any old effects. */
 //    InventoryRemoveEquippedEffects() ;
@@ -3516,21 +3558,22 @@ T_void InventoryReadItemsList(FILE *fp)
     /* to our items list if they are not null */
     for (i=0;i<EQUIP_NUMBER_OF_LOCATIONS;i++)
     {
-        /* allocate a new chunk for read */
-        p_inv=(T_inventoryItemStruct *)MemAlloc(size);
-
-        /* clean it */
-        memset (p_inv,0,size);
+        memset (&diskItem,0,size);
 
         /* read in an item */
-        if (!feof(fp)) fread (p_inv,size,1,fp);
+        if ((feof(fp)) || (fread (&diskItem,size,1,fp) != 1))
+            continue ;
 
-        IInventoryRepairLegacySavedItemDesc(p_inv);
+        IInventoryRepairLegacySavedItemDesc(&diskItem);
+        ISwapInventoryItem(&diskItem) ;
 
         /* see if it's a valid entry */
-        if ((p_inv->objecttype != 0) && (!feof(fp)))
+        if (diskItem.objecttype != 0)
         {
-            /* recreate the object */
+            /* allocate the runtime item and recreate the object */
+            p_inv=(T_inventoryItemStruct *)MemAlloc(sizeof(T_inventoryItemStruct));
+            IInventoryItemFromDisk(p_inv, &diskItem) ;
+
             p_inv->object=ObjectCreateFake ();
             DebugCheck(p_inv->object != NULL) ;
 //printf("inv object: %d\n", p_inv->objecttype) ;
@@ -3548,28 +3591,27 @@ T_void InventoryReadItemsList(FILE *fp)
             /* trigger any 'equip' effects for item */
 //          InventoryDoEffect (EFFECT_TRIGGER_READY,i);
         }
-        else
-        {
-            /* it's blank, throw it away */
-            MemFree (p_inv);
-        }
     }
 
     /* get the rest of the items */
     while (!feof(fp))
     {
-        /* allocate a new chunk for read */
-        p_inv=(T_inventoryItemStruct *)MemAlloc(size);
+        memset (&diskItem,0,size);
 
         /* read in the block */
-        fread (p_inv,size,1,fp);
+        if (fread (&diskItem,size,1,fp) != 1)
+            break ;
 
-        IInventoryRepairLegacySavedItemDesc(p_inv);
+        IInventoryRepairLegacySavedItemDesc(&diskItem);
+        ISwapInventoryItem(&diskItem) ;
 
         /* see if it's a valid entry */
-        if ((p_inv->objecttype != 0) && (!feof(fp)))
+        if (diskItem.objecttype != 0)
         {
-            /* recreate the object */
+            /* allocate the runtime item and recreate the object */
+            p_inv=(T_inventoryItemStruct *)MemAlloc(sizeof(T_inventoryItemStruct));
+            IInventoryItemFromDisk(p_inv, &diskItem) ;
+
             p_inv->object=ObjectCreateFake ();
 //printf("inv object2: %d\n", p_inv->objecttype) ;
             ObjectSetType (p_inv->object,p_inv->objecttype);
@@ -3581,11 +3623,6 @@ T_void InventoryReadItemsList(FILE *fp)
             /* set the inventory and equip list location pointer */
             /* and add it to the list */
             p_inv->elementID=DoubleLinkListAddElementAtEnd(G_inventories[INVENTORY_PLAYER].itemslist,p_inv);
-        }
-        else
-        {
-            /* it's blank, throw it away */
-            MemFree (p_inv);
         }
     }
 
@@ -3648,7 +3685,7 @@ static T_void IInventoryWriteItem(
                   FILE *fp,
                   T_doubleLinkListElement element)
 {
-    T_inventoryItemStruct itemCopy ;
+    T_inventoryItemDiskStruct diskItem ;
     T_inventoryItemStruct *p_item = NULL ;
 
     DebugRoutine("IInventoryWriteItem") ;
@@ -3659,16 +3696,29 @@ static T_void IInventoryWriteItem(
             (T_inventoryItemStruct *) DoubleLinkListElementGetData(element) ;
     }
 
+    memset(&diskItem, 0, sizeof(diskItem)) ;
     if (p_item)  {
-        itemCopy = *p_item ;
-        itemCopy.object = NULL ;
-        itemCopy.p_bitmap = NULL ;
-        itemCopy.elementID = DOUBLE_LINK_LIST_ELEMENT_BAD ;
-    } else {
-        memset(&itemCopy, 0, sizeof(itemCopy)) ;
+        /* object/p_bitmap/elementID are runtime-only (see
+           T_inventoryItemDiskStruct's comment in INVENTOR.H) -- the disk
+           record's reserved placeholders for them stay zeroed. */
+        diskItem.locx = p_item->locx ;
+        diskItem.locy = p_item->locy ;
+        diskItem.picwidth = p_item->picwidth ;
+        diskItem.picheight = p_item->picheight ;
+        diskItem.gridstartx = p_item->gridstartx ;
+        diskItem.gridstarty = p_item->gridstarty ;
+        diskItem.gridspacesx = p_item->gridspacesx ;
+        diskItem.gridspacesy = p_item->gridspacesy ;
+        diskItem.objecttype = p_item->objecttype ;
+        diskItem.storepage = p_item->storepage ;
+        diskItem.numitems = p_item->numitems ;
+        diskItem.itemdesc = p_item->itemdesc ;
     }
 
-    fwrite(&itemCopy, sizeof(itemCopy), 1, fp);
+    /* diskItem is a scratch copy, so swap it to on-disk byte order in
+       place rather than touching the live inventory item. */
+    ISwapInventoryItem(&diskItem) ;
+    fwrite(&diskItem, sizeof(diskItem), 1, fp);
 
     DebugEnd() ;
 }

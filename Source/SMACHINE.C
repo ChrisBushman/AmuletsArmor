@@ -16,8 +16,18 @@
 #include "MEMORY.H"
 #include "SMACHINE.H"
 
-#define STATE_MACHINE_INSTANCE_TAG      (*((T_word32 *)"SmIt"))
-#define STATE_MACHINE_INSTANCE_DEAD_TAG (*((T_word32 *)"DsMi"))
+/* Composed as a compile-time constant rather than a string-literal cast:
+   string literals aren't guaranteed 4-byte aligned, and a raw T_word32*
+   dereference of one faults with SIGBUS on strict-alignment targets
+   (e.g. the SGI O2/MIPS port). */
+#define STATE_MACHINE_INSTANCE_TAG      ((T_word32)('S' << 0) | \
+                                                    ('m' << 8) | \
+                                                    ('I' << 16) | \
+                                                    ('t' << 24))
+#define STATE_MACHINE_INSTANCE_DEAD_TAG ((T_word32)('D' << 0) | \
+                                                    ('s' << 8) | \
+                                                    ('M' << 16) | \
+                                                    ('i' << 24))
 
 typedef struct {
     T_word32 tag ;

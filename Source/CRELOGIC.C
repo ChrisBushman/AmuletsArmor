@@ -219,7 +219,7 @@ typedef struct {
 } T_creatureLogic ;
 
 /* Include in the data of data that makes up the creature logic. */
-#include "credata.h"
+#include "CREDATA.H"
 
 #define MAX_CREATURE_MOVES_PER_UPDATE  3
 #define SCANB_TURN_RATE                10

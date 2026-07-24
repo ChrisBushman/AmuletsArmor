@@ -14,7 +14,16 @@
  *<!-----------------------------------------------------------------------*/
 #include "OPTIONS.H"
 #if WIN32
+/* See OPTIONS.H for why WIN32 must be hidden from SDL's own headers here
+   (usually a no-op: OPTIONS.H already includes SDL.h under its own guard,
+   so this is just defensive against include-order changes). */
+#ifdef TARGET_UNIX
+#undef WIN32
 #include <SDL.h>
+#define WIN32 1
+#else
+#include <SDL.h>
+#endif
 #endif
 #include <string.h>
 #include "DBLLINK.H"

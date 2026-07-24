@@ -19,8 +19,18 @@
 #include "GRAPHICS.H"
 #include "MEMORY.H"
 
-#define DOUBLE_LINK_LIST_TAG      (*((T_word32 *)"DbLi"))
-#define DOUBLE_LINK_LIST_DEAD_TAG (*((T_word32 *)"DdBl"))
+/* Composed as a compile-time constant rather than a string-literal cast:
+   string literals aren't guaranteed 4-byte aligned, and a raw T_word32*
+   dereference of one faults with SIGBUS on strict-alignment targets
+   (e.g. the SGI O2/MIPS port). */
+#define DOUBLE_LINK_LIST_TAG      ((T_word32)('D' << 0) | \
+                                             ('b' << 8) | \
+                                             ('L' << 16) | \
+                                             ('i' << 24))
+#define DOUBLE_LINK_LIST_DEAD_TAG ((T_word32)('D' << 0) | \
+                                             ('d' << 8) | \
+                                             ('B' << 16) | \
+                                             ('l' << 24))
 
 /* Flag to turn on output of all double link node creation */
 //#define COMPILE_OPTION_DOUBLE_LINK_OUTPUT

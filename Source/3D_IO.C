@@ -30,6 +30,7 @@
 #include "OBJGEN.H"
 #include "PICS.H"
 #include "PROMPT.H"
+#include "ENDIAN_AA.H"
 
 #define OBJECT_TYPE_LIGHT   924
 
@@ -161,6 +162,142 @@ T_word16             G_objCollisionNumY ;
 T_word16             G_lastCollisionList ;
 T_doubleLinkList    *G_3dObjCollisionLists ;
 
+/* The map file is a Doom-style WAD: a raw little-endian struct dump.
+   These helpers fix up byte order in place after each FileRead so the
+   rest of the engine can keep treating the data as host-native. */
+static T_void ISwapWadHeader(T_wadHeader *p_header)
+{
+    EndianLE32P(&p_header->numEntries) ;
+    EndianLE32P(&p_header->foffset) ;
+}
+
+static T_void ISwapDirectoryEntry(T_directoryEntry *p_dir)
+{
+    EndianLE32P(&p_dir->foffset) ;
+    EndianLE32P(&p_dir->size) ;
+}
+
+static T_void ISwap3dObjectInFile(T_3dObjectInFile *p_obj)
+{
+    EndianLES16P(&p_obj->x) ;
+    EndianLES16P(&p_obj->y) ;
+    EndianLE16P(&p_obj->angle) ;
+    EndianLES16P(&p_obj->objectType) ;
+    EndianLES16P(&p_obj->attributes) ;
+}
+
+/* Every ISwap3d* function below swaps array-indexed elements of a
+   packed (per-field PACK, see VIEWFILE.H) on-disk struct in place.
+   EndianLE16P/EndianLES16P (memcpy-then-byte-composed, see ENDIAN_AA.H)
+   rather than a direct `arr[i].field = EndianLE16(arr[i].field)`
+   assignment: that pattern is what every alignment crash chased down
+   in OBJTYPE.C this pass turned out to trace back to -- even for a
+   struct whose fields are all provably at even byte offsets (as most
+   of these are), GCC 4.5.2 at -O2 on this target has repeatedly been
+   caught compiling that exact "read a packed field, swap it, write it
+   back to itself" shape into a single unaligned-unsafe load/store,
+   confirmed via disassembly of multiple real SIGBUS core dumps on the
+   SGI O2/MIPS port. */
+static T_void ISwap3dSegs(T_3dSegment *p_segs, T_word16 num)
+{
+    T_word16 i ;
+    for (i=0; i<num; i++)  {
+        EndianLES16P(&p_segs[i].from) ;
+        EndianLES16P(&p_segs[i].to) ;
+        EndianLE16P(&p_segs[i].angle) ;
+        EndianLES16P(&p_segs[i].line) ;
+        EndianLES16P(&p_segs[i].lineSide) ;
+        EndianLES16P(&p_segs[i].lineOffset) ;
+    }
+}
+
+static T_void ISwap3dSides(T_3dSide *p_sides, T_word16 num)
+{
+    T_word16 i ;
+    for (i=0; i<num; i++)  {
+        EndianLES16P(&p_sides[i].tmXoffset) ;
+        EndianLES16P(&p_sides[i].tmYoffset) ;
+        EndianLE16P(&p_sides[i].sector) ;
+        /* upperTx/lowerTx/mainTx are texture-name byte arrays, no swap. */
+    }
+}
+
+static T_void ISwap3dLines(T_3dLine *p_lines, T_word16 num)
+{
+    T_word16 i ;
+    for (i=0; i<num; i++)  {
+        EndianLES16P(&p_lines[i].from) ;
+        EndianLES16P(&p_lines[i].to) ;
+        EndianLES16P(&p_lines[i].flags) ;
+        EndianLES16P(&p_lines[i].special) ;
+        EndianLES16P(&p_lines[i].tag) ;
+        EndianLES16P(&p_lines[i].side[0]) ;
+        EndianLES16P(&p_lines[i].side[1]) ;
+    }
+}
+
+static T_void ISwap3dNodes(T_3dNode *p_nodes, T_word16 num)
+{
+    T_word16 i ;
+    for (i=0; i<num; i++)  {
+        EndianLES16P(&p_nodes[i].x) ;
+        EndianLES16P(&p_nodes[i].y) ;
+        EndianLES16P(&p_nodes[i].dx) ;
+        EndianLES16P(&p_nodes[i].dy) ;
+        EndianLES16P(&p_nodes[i].ry2) ;
+        EndianLES16P(&p_nodes[i].ry1) ;
+        EndianLES16P(&p_nodes[i].rx1) ;
+        EndianLES16P(&p_nodes[i].rx2) ;
+        EndianLES16P(&p_nodes[i].ly2) ;
+        EndianLES16P(&p_nodes[i].ly1) ;
+        EndianLES16P(&p_nodes[i].lx1) ;
+        EndianLES16P(&p_nodes[i].lx2) ;
+        EndianLE16P(&p_nodes[i].right) ;
+        EndianLE16P(&p_nodes[i].left) ;
+    }
+}
+
+static T_void ISwap3dSectors(T_3dSector *p_sectors, T_word16 num)
+{
+    T_word16 i ;
+    for (i=0; i<num; i++)  {
+        EndianLES16P(&p_sectors[i].floorHt) ;
+        EndianLES16P(&p_sectors[i].ceilingHt) ;
+        EndianLES16P(&p_sectors[i].light) ;
+        EndianLES16P(&p_sectors[i].type) ;
+        EndianLES16P(&p_sectors[i].trigger) ;
+        /* floorTx/ceilingTx are texture-name byte arrays, no swap. */
+    }
+}
+
+static T_void ISwap3dVertexes(T_3dVertex *p_verts, T_word16 num)
+{
+    T_word16 i ;
+    for (i=0; i<num; i++)  {
+        EndianLES16P(&p_verts[i].x) ;
+        EndianLES16P(&p_verts[i].y) ;
+    }
+}
+
+static T_void ISwap3dSegmentSectors(T_3dSegmentSector *p_ss, T_word16 num)
+{
+    T_word16 i ;
+    for (i=0; i<num; i++)  {
+        EndianLES16P(&p_ss[i].numSegs) ;
+        EndianLES16P(&p_ss[i].firstSeg) ;
+    }
+}
+
+/* Blockmap is a flat array of T_sword16 (the header is just the first
+   few slots reinterpreted), so a flat per-element swap covers both. */
+static T_void ISwap3dBlockMap(T_3dBlockMap *p_map, T_word32 sizeInBytes)
+{
+    T_word32 i, num ;
+    num = sizeInBytes / sizeof(T_3dBlockMap) ;
+    for (i=0; i<num; i++)
+        EndianLES16P(&p_map[i]) ;
+}
+
 /*-------------------------------------------------------------------------*
  * Routine:  View3dLoadMap
  *-------------------------------------------------------------------------*/
@@ -186,6 +323,7 @@ T_void View3dLoadMap(T_byte8 *MapName)
     DebugCheck(file != FILE_BAD) ;
 
     FileRead(file, &header, sizeof(header)) ;
+    ISwapWadHeader(&header) ;
 
     if (strnicmp(header.signature, "IWAD", 4) == 0)  {
 //puts("Reading IWAD file.\n") ;
@@ -212,6 +350,7 @@ puts("Not a valid file!\n") ;
     while (entriesRead < 11)  {
         FileSeek(file, entryOffset) ;
         FileRead(file, &directory, sizeof(T_directoryEntry)) ;
+        ISwapDirectoryEntry(&directory) ;
 
         if (strnicmp(directory.name, "BLOCKMAP", 8) == 0)
             ILoadBlockMap(file, &directory) ;
@@ -237,6 +376,7 @@ puts("Not a valid file!\n") ;
         PromptStatusBarUpdate (25+(entriesRead*3));
         FileSeek(file, entryOffset) ;
         FileRead(file, &directory, sizeof(T_directoryEntry)) ;
+        ISwapDirectoryEntry(&directory) ;
 
         if (strnicmp(directory.name, "THINGS", 6)==0)
             ILoadObjects(file, &directory) ;
@@ -386,6 +526,7 @@ static T_void ILoadObjects(
     /* Look for the player #1 start. */
     for (i=0; i<num; i++)  {
         FileRead(file, &objData, sizeof(T_3dObjectInFile)) ;
+        ISwap3dObjectInFile(&objData) ;
 
 //printf("%d) ObjType: %05d\n", i, objData.objectType) ;
 //        color = objData.objectType>>12 ;
@@ -526,6 +667,7 @@ static T_void ILoadSegs(
     /* Seek and read in the segments. */
     FileSeek(file, p_dir->foffset) ;
     FileRead(file, G_3dSegArray, p_dir->size) ;
+    ISwap3dSegs(G_3dSegArray, G_Num3dSegs) ;
 
 //printf("SEGMENTS : %d\n", G_Num3dSegs) ;
 
@@ -558,6 +700,7 @@ static T_void ILoadSides(
     /* Seek and read in the sides. */
     FileSeek(file, p_dir->foffset) ;
     FileRead(file, G_3dSideArray, p_dir->size) ;
+    ISwap3dSides(G_3dSideArray, G_Num3dSides) ;
 
 //printf("SIDEDEFS : %d\n", G_Num3dSides) ;
 
@@ -590,6 +733,7 @@ static T_void ILoadLines(
     /* Seek and read in the lines. */
     FileSeek(file, p_dir->foffset) ;
     FileRead(file, G_3dLineArray, p_dir->size) ;
+    ISwap3dLines(G_3dLineArray, G_Num3dLines) ;
 
 //printf("LINEDEFS : %d\n", G_Num3dLines) ;
     DebugEnd() ;
@@ -634,6 +778,7 @@ static T_void ILoadNodes(
     /* Seek and read in the nodes. */
     FileSeek(file, p_dir->foffset) ;
     FileRead(file, G_3dNodeArray, p_dir->size) ;
+    ISwap3dNodes(G_3dNodeArray, G_Num3dNodes) ;
 
 //printf("NODES    : %d\n", G_Num3dNodes) ;
     DebugEnd() ;
@@ -667,6 +812,7 @@ static T_void ILoadSectors(
     /* Seek and read in the nodes. */
     FileSeek(file, p_dir->foffset) ;
     FileRead(file, G_3dSectorArray, p_dir->size) ;
+    ISwap3dSectors(G_3dSectorArray, G_Num3dSectors) ;
 
     G_3dSectorInfoArray =
         (T_3dSectorInfo *)MemAlloc(G_Num3dSectors * sizeof(T_3dSectorInfo)) ;
@@ -709,6 +855,7 @@ static T_void ILoadVertexes(
     /* Seek and read in the nodes. */
     FileSeek(file, p_dir->foffset) ;
     FileRead(file, G_3dVertexArray, p_dir->size) ;
+    ISwap3dVertexes(G_3dVertexArray, G_Num3dVertexes) ;
 
 //printf("VERTEXES : %d\n", G_Num3dVertexes) ;
     DebugEnd() ;
@@ -741,6 +888,7 @@ static T_void ILoadSegmentSectors(
     /* Seek and read in the nodes. */
     FileSeek(file, p_dir->foffset) ;
     FileRead(file, G_3dSegmentSectorArray, p_dir->size) ;
+    ISwap3dSegmentSectors(G_3dSegmentSectorArray, G_Num3dSSectors) ;
 
 //printf("SSECTORS : %d\n", G_Num3dSSectors) ;
     DebugEnd() ;
@@ -865,6 +1013,7 @@ static T_void ILoadBlockMap(
     /* Seek and read in the nodes. */
     FileSeek(file, p_dir->foffset) ;
     FileRead(file, G_3dBlockMapArray, p_dir->size) ;
+    ISwap3dBlockMap(G_3dBlockMapArray, p_dir->size) ;
 
 #ifndef NDEBUG
 #if 0
@@ -1031,29 +1180,29 @@ static T_void ILockPictures(T_void)
 
         if (p_side->upperTx[0] != '-')  {
             strncpy(name, p_side->upperTx, 8) ;
-            *TX_PTR_FIELD(p_side->upperTx) =
-                PictureLock(name, &G_3dUpperResourceArray[i]) ;
+            TX_PTR_SET(p_side->upperTx,
+                PictureLock(name, &G_3dUpperResourceArray[i])) ;
         } else {
             G_3dUpperResourceArray[i] = RESOURCE_BAD ;
-            *TX_PTR_FIELD(p_side->upperTx) = G_textureNone+4 ;
+            TX_PTR_SET(p_side->upperTx, G_textureNone+4) ;
         }
 
         if (p_side->lowerTx[0] != '-')  {
             strncpy(name, p_side->lowerTx, 8) ;
-            *TX_PTR_FIELD(p_side->lowerTx) =
-                PictureLock(name, &G_3dLowerResourceArray[i]) ;
+            TX_PTR_SET(p_side->lowerTx,
+                PictureLock(name, &G_3dLowerResourceArray[i])) ;
         } else {
             G_3dLowerResourceArray[i] = RESOURCE_BAD ;
-            *TX_PTR_FIELD(p_side->lowerTx) = G_textureNone+4 ;
+            TX_PTR_SET(p_side->lowerTx, G_textureNone+4) ;
         }
 
         if (p_side->mainTx[0] != '-')  {
             strncpy(name, p_side->mainTx, 8) ;
-            *TX_PTR_FIELD(p_side->mainTx) =
-                PictureLock(name, &G_3dMainResourceArray[i]) ;
+            TX_PTR_SET(p_side->mainTx,
+                PictureLock(name, &G_3dMainResourceArray[i])) ;
         } else {
             G_3dMainResourceArray[i] = RESOURCE_BAD ;
-            *TX_PTR_FIELD(p_side->mainTx) = G_textureNone+4 ;
+            TX_PTR_SET(p_side->mainTx, G_textureNone+4) ;
         }
     }
 
@@ -1063,11 +1212,11 @@ static T_void ILockPictures(T_void)
 
         if (p_sector->floorTx[0] != '-')  {
             strncpy(name, p_sector->floorTx, 8) ;
-            *TX_PTR_FIELD(p_sector->floorTx) =
-                PictureLock(name, &G_3dFloorResourceArray[i]) ;
+            TX_PTR_SET(p_sector->floorTx,
+                PictureLock(name, &G_3dFloorResourceArray[i])) ;
         } else {
             G_3dFloorResourceArray[i] = RESOURCE_BAD ;
-            *TX_PTR_FIELD(p_sector->floorTx) = G_textureNone+4 ;
+            TX_PTR_SET(p_sector->floorTx, G_textureNone+4) ;
         }
         if (p_sector->ceilingTx[0] != '-')  {
             strncpy(name, p_sector->ceilingTx, 8) ;
@@ -1076,11 +1225,11 @@ static T_void ILockPictures(T_void)
                 // Set the sky attribute
                 p_sector->trigger |= 1;
             }
-            *TX_PTR_FIELD(p_sector->ceilingTx) =
-                PictureLock(name, &G_3dCeilingResourceArray[i]) ;
+            TX_PTR_SET(p_sector->ceilingTx,
+                PictureLock(name, &G_3dCeilingResourceArray[i])) ;
         } else {
             G_3dCeilingResourceArray[i] = RESOURCE_BAD ;
-            *TX_PTR_FIELD(p_sector->ceilingTx) = G_textureNone+4 ;
+            TX_PTR_SET(p_sector->ceilingTx, G_textureNone+4) ;
         }
     }
 #endif
@@ -1637,7 +1786,11 @@ T_byte8 *MipMap(T_byte8 *p_texture)
             p_work2 = p_work + (sizeX * sizeY) ;
 
             /* Now create the shrunk image for #2. */
-            memcpy(p_work2, p_texture-4, 4) ;
+            /* AlignedSetW32/AlignedGetW32 (ENDIAN_AA.H) rather than a
+               fixed 4-byte memcpy: confirmed on the SGI O2's GCC 4.5.2
+               that memcpy of exactly this size gets pattern-matched at
+               -O2 into a single plain (alignment-requiring) lw/sw. */
+            AlignedSetW32(p_work2, AlignedGetW32(p_texture-4)) ;
             p_work2+=4 ;
             IShrinkTexture(p_work2, p_work, sizeX, sizeY) ;
 
@@ -1645,7 +1798,11 @@ T_byte8 *MipMap(T_byte8 *p_texture)
             p_work2 += ((sizeX>>1) * (sizeY>>1)) ;
 
             /* Now create the shrunk image for #3. */
-            memcpy(p_work2, p_texture-4, 4) ;
+            /* AlignedSetW32/AlignedGetW32 (ENDIAN_AA.H) rather than a
+               fixed 4-byte memcpy: confirmed on the SGI O2's GCC 4.5.2
+               that memcpy of exactly this size gets pattern-matched at
+               -O2 into a single plain (alignment-requiring) lw/sw. */
+            AlignedSetW32(p_work2, AlignedGetW32(p_texture-4)) ;
             p_work2+= 4;
             IShrinkTexture(p_work2, p_work, (sizeX>>1), (sizeY>>1)) ;
 
@@ -1653,7 +1810,11 @@ T_byte8 *MipMap(T_byte8 *p_texture)
             p_work2 += ((sizeX>>2) * (sizeY>>2)) ;
 
             /* Now create the shrunk image for #4. */
-            memcpy(p_work2, p_texture-4, 4) ;
+            /* AlignedSetW32/AlignedGetW32 (ENDIAN_AA.H) rather than a
+               fixed 4-byte memcpy: confirmed on the SGI O2's GCC 4.5.2
+               that memcpy of exactly this size gets pattern-matched at
+               -O2 into a single plain (alignment-requiring) lw/sw. */
+            AlignedSetW32(p_work2, AlignedGetW32(p_texture-4)) ;
             p_work2+= 4;
             IShrinkTexture(p_work2, p_work, (sizeX>>2), (sizeY>>2)) ;
 
@@ -1661,7 +1822,11 @@ T_byte8 *MipMap(T_byte8 *p_texture)
             p_work2 += ((sizeX>>3) * (sizeY>>3)) ;
 
             /* Now create the shrunk image for #5. */
-            memcpy(p_work2, p_texture-4, 4) ;
+            /* AlignedSetW32/AlignedGetW32 (ENDIAN_AA.H) rather than a
+               fixed 4-byte memcpy: confirmed on the SGI O2's GCC 4.5.2
+               that memcpy of exactly this size gets pattern-matched at
+               -O2 into a single plain (alignment-requiring) lw/sw. */
+            AlignedSetW32(p_work2, AlignedGetW32(p_texture-4)) ;
             p_work2+= 4;
             IShrinkTexture(p_work2, p_work, (sizeX>>3), (sizeY>>3)) ;
 

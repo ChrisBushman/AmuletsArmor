@@ -78,6 +78,16 @@ T_void CmdQClearPort(T_void) ;
 
 T_void CmdQForcedReceive(T_packetEitherShortOrLong *p_packet) ;
 
+/* Fixes up an application-level packet payload's byte order in place
+   (see PACKET.H/SYNCPACK.H for the per-command layouts).  ICmdQSendPacket
+   and CmdQUpdateAllReceives call this automatically for anything sent via
+   CmdQSendShortPacket/CmdQSendLongPacket/CmdQSendPacket.  Code that calls
+   PacketSend() directly, bypassing the CmdQ queue (as CSYNCPCK.C's sync
+   packets do, for latency reasons), must call this itself -- on a
+   throwaway copy, not the original, since it must remain host-native for
+   local re-use (self-delivery, retransmit history, etc). */
+T_void CmdQSwapPacketPayload(T_byte8 *p_data) ;
+
 #endif
 
 /****************************************************************************/

@@ -113,7 +113,7 @@ T_void BannerInit(T_void)
     DebugRoutine("BannerInit");
 
     /* Draw the boundaries of the screen. */
-    b1 = (T_bitmap *)PictureLockData("UI/3DUI/MAINBACK", &r1);
+    b1 = PictureLockDataAsBitmap("UI/3DUI/MAINBACK", &r1);
     GrDrawBitmap(b1, 0, 0);
     PictureUnlock(r1);
     PictureUnfind(r1);
@@ -293,7 +293,7 @@ T_void BannerOpenForm(E_bannerFormType formtype)
     FormSetCallbackRoutine(BannerFormControl);
 
     /* set the window to half screen view */
-    View3dClipCenter(205);
+    View3dClipCenter(205*VIEW3D_SCALE);
 //    GrScreenSet(GRAPHICS_ACTUAL_SCREEN) ;
 
     /* update the graphics */
@@ -522,7 +522,7 @@ T_void BannerCloseForm(T_void)
     FormSetCallbackRoutine(NULL);
     /* restore the display screen to full view */
 
-    View3dClipCenter(312);
+    View3dClipCenter(312*VIEW3D_SCALE);
     if (HardFormIsOpen() == TRUE) {
         graphic = GraphicCreate(209, 0, "UI/3DUI/CLOSEDBA");
         GraphicUpdateAllGraphics();

@@ -16,10 +16,15 @@
 #include "PICS.H"
 
 #ifdef WIN32
-#include "direct.h"
+#include "WINDIRECT.H"
 #endif
 #ifdef TARGET_UNIX
+/* See OPTIONS.H for why WIN32 must be hidden from SDL's own headers here
+   (WIN32 and TARGET_UNIX are both defined together on this codebase's
+   Apple/Unix builds). */
+#undef WIN32
 #include <SDL.h>
+#define WIN32 1
 #endif
 
 /* Flag that determines if the mouse module has been initialized. */
@@ -823,6 +828,24 @@ T_void MouseDraw(T_void)
             G_lastDrawX = mx ;
             G_lastDrawY = my ;
 
+            /* TRUE-HIGHRES: over the 3D viewport the composited output  */
+            /* shows the native frame + overlay, hiding the classic-     */
+            /* screen cursor.  Stamp it onto the overlay layer too       */
+            /* (color 0 transparent, composited above the view).         */
+            {
+                extern T_screen View3dGetOverlayScreen() ;
+                extern int HighResGetScale() ;
+                T_screen ovl = View3dGetOverlayScreen() ;
+                if ((ovl != NULL) && (HighResGetScale() > 1))  {
+                    GrScreenSet(ovl) ;
+                    GrDrawCompressedBitmapAndClipAndColor(
+                        PictureToBitmap((T_byte8 *)G_bitmap),
+                        mx,
+                        my,
+                        G_colorTable) ;
+                }
+            }
+
             GrScreenSet(was) ;
         }
     }
@@ -1158,12 +1181,12 @@ T_void MouseRelativeModeOn(T_void)
 #ifdef TARGET_UNIX
         /* On Unix/SDL2 we use SDL_GetRelativeMouseState instead of warp+poll.
          * Drain any accumulated deltas so the first read returns zero.
-         * Grab the mouse to confine the OS cursor to the window. */
+         * (Input grab itself is permanent for the whole session -- see
+         * SDL_main in main.c -- not tied to relative mode.) */
         {
             int dummy_dx = 0, dummy_dy = 0;
             SDL_GetRelativeMouseState(&dummy_dx, &dummy_dy);
         }
-        SDL_WM_GrabInput(SDL_GRAB_ON);
 #else
         // Center the mouse
         MouseMoveTo(SCREEN_SIZE_X/2, SCREEN_SIZE_Y/2);
@@ -1180,9 +1203,6 @@ T_void MouseRelativeModeOff(T_void)
     DebugRoutine("MouseRelativeModeOff");
 
     if (G_relativeMode) {
-#ifdef TARGET_UNIX
-        SDL_WM_GrabInput(SDL_GRAB_OFF);
-#endif
         // Restore the original mouse location
         MouseMoveTo(G_mousePreRelativeX, G_mousePreRelativeY);
 

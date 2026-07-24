@@ -19,8 +19,8 @@
 #define  _SOS_MIDI_DEFINED   
 
 #include < stdlib.h >
-#include "sosdefs.h"
-#include "sos.h"
+#include "SOSDEFS.H"
+#include "SOS.H"
 
 #ifdef __cplusplus
 extern "C" {
@@ -890,8 +890,8 @@ typedef _MIDI_SYSTEM far * LPSYSTEM;
 }
 #endif 
 
-#include "sosmfnct.h"
-#include "sosmdata.h"
+#include "SOSMFNCT.H"
+#include "SOSMDATA.H"
 
 #endif
 

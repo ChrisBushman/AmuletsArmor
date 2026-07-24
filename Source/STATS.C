@@ -31,6 +31,7 @@
 #include "SPELTYPE.H"
 #include "STATS.H"
 #include "TICKER.H"
+#include "ENDIAN_AA.H"
 #include "VIEW.H"
 #include <direct.h>
 
@@ -3542,6 +3543,76 @@ T_word16 StatsFindPastPlace(T_word16 adventureNumber)
 }
 
 
+/* The character save file is a raw little-endian struct dump of
+   T_playerStats.  This fixes up byte order in place for every multi-byte
+   field; byte/char array fields (name, textures, notes, bitfields, etc.)
+   are untouched since they need no swap. */
+static T_void ISwapPlayerStats(T_playerStats *p)
+{
+    T_word16 i ;
+
+    p->Health = EndianLES32(p->Health) ;
+    p->MaxHealth = EndianLES32(p->MaxHealth) ;
+    p->Mana = EndianLES32(p->Mana) ;
+    p->MaxMana = EndianLES32(p->MaxMana) ;
+
+    p->Food = EndianLES16(p->Food) ;
+    p->MaxFood = EndianLES16(p->MaxFood) ;
+    p->Water = EndianLES16(p->Water) ;
+    p->MaxWater = EndianLES16(p->MaxWater) ;
+
+    p->PoisonLevel = EndianLES16(p->PoisonLevel) ;
+    p->RegenHealth = EndianLES16(p->RegenHealth) ;
+    p->RegenMana = EndianLES16(p->RegenMana) ;
+
+    p->JumpPower = EndianLE16(p->JumpPower) ;
+    p->JumpPowerMod = EndianLE16(p->JumpPowerMod) ;
+    p->Tallness = EndianLE16(p->Tallness) ;
+    p->ClimbHeight = EndianLE16(p->ClimbHeight) ;
+    p->MaxVRunning = EndianLE16(p->MaxVRunning) ;
+    p->MaxVWalking = EndianLE16(p->MaxVWalking) ;
+
+    p->HeartRate = EndianLE16(p->HeartRate) ;
+    p->MaxFallV = EndianLE16(p->MaxFallV) ;
+
+    /* WeaponBaseDamage/WeaponBaseSpeed are single bytes, no swap. */
+    p->AttackSpeed = EndianLE32(p->AttackSpeed) ;
+    p->AttackDamage = EndianLE16(p->AttackDamage) ;
+
+    /* playerisalive/ClassType/Attributes[] are single bytes, no swap. */
+    for (i=0; i<NUM_ATTRIBUTES; i++)
+        p->AttributeMods[i] = EndianLES16(p->AttributeMods[i]) ;
+    for (i=0; i<EQUIP_TOTAL_COIN_TYPES; i++)  {
+        p->Coins[i] = EndianLES16(p->Coins[i]) ;
+        p->SavedCoins[i] = EndianLES16(p->SavedCoins[i]) ;
+    }
+    for (i=0; i<EQUIP_TOTAL_BOLT_TYPES; i++)
+        p->Bolts[i] = EndianLES16(p->Bolts[i]) ;
+
+    /* ArmorValues[]/ArmorLevel are bytes, no swap. */
+    p->Load = EndianLE16(p->Load) ;
+    p->MaxLoad = EndianLE16(p->MaxLoad) ;
+
+    /* Level is a byte, no swap. */
+    p->Experience = EndianLE32(p->Experience) ;
+    p->ExpNeeded = EndianLE32(p->ExpNeeded) ;
+
+    /* SpellSystem/ActiveRunes[]/HouseOwned[]/HasNotes[] are bytes, no swap. */
+    p->NumNotes = EndianLE16(p->NumNotes) ;
+
+    /* Notes[]/Identified[]/password[]/CompletedAdventure are bytes, no swap. */
+    p->CompletedMap = EndianLE16(p->CompletedMap) ;
+    p->CurrentQuestNumber = EndianLE16(p->CurrentQuestNumber) ;
+
+    p->pastPlaces.numInList = EndianLE16(p->pastPlaces.numInList) ;
+    for (i=0; i<MAX_PAST_PLACES; i++)  {
+        p->pastPlaces.places[i].adventureNumber =
+            EndianLE16(p->pastPlaces.places[i].adventureNumber) ;
+        p->pastPlaces.places[i].lastLevelNumber =
+            EndianLE16(p->pastPlaces.places[i].lastLevelNumber) ;
+    }
+}
+
 /* routine loads a character (currently from client hard drive) */
 /* character loaded is designated by selected and G_serverID (client.c) */
 /* LES: Low level load character:  Don't worry about what server thinks. */
@@ -3572,6 +3643,7 @@ E_Boolean StatsLoadCharacter (T_byte8 selected)
             /* file is available, load character */
             /* get the statistics */
             fread (G_activeStats,sizeof(T_playerStats),1,fin);
+            ISwapPlayerStats(G_activeStats) ;
             /* get the inventory items */
             InventoryReadItemsList(fin);
             fclose (fin);
@@ -3633,7 +3705,12 @@ E_Boolean StatsSaveCharacter (T_byte8 selected)
         if (fout != NULL)
         {
             /* write player statistics */
+            /* ISwapPlayerStats is its own inverse, so swap to little-endian
+               for the on-disk format, write, then swap back rather than
+               allocate a scratch copy of this large struct. */
+            ISwapPlayerStats(G_activeStats) ;
             fwrite (G_activeStats,sizeof(T_playerStats),1,fout);
+            ISwapPlayerStats(G_activeStats) ;
             /* write player inventory list */
             /* get up to 200 inventory items for player */
             /* and append each to file. */

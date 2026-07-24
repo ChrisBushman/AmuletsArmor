@@ -7,7 +7,16 @@ Build/Windows/VC2013/**/*.user
 # Build outputs
 /out/
 /build_tests/
+/build_maxres/
+/build_res3/
+/build_test/
 /Build/build_tests/
+/Build/MacOSX-PPC/build/
+/Build/IRIX-O2/build/
+
+# Native binaries built locally for release packaging -- these ship as
+# GitHub Release assets, not committed into the tree.
+/Exe/amulets-armor
 
 # CMake/Ninja outputs if generated at repo root
 /CMakeFiles/
