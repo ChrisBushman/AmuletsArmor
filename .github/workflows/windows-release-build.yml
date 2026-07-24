@@ -26,11 +26,6 @@ jobs:
       # (format-string mismatches, C4091, etc.) on this 30-year-old
       # codebase that VS2013's compiler never flagged for the same
       # lines -- fixing all of those is out of scope for a release build.
-      - name: List installed Windows SDKs
-        shell: bash
-        run: |
-          ls "/c/Program Files (x86)/Windows Kits/10/Include/" || true
-
       - name: Disable TreatWarningAsError for this CI build
         shell: bash
         run: |
@@ -44,20 +39,22 @@ jobs:
       # retarget to whatever's installed (v143, matching VS2022) since
       # the C/C++ actually compiled here is already portable (it also
       # builds fine under GCC/Clang on every other platform this
-      # project targets). WindowsTargetPlatformVersion is pinned to an
-      # older, widely-available SDK rather than whatever's newest: the
-      # project forces 1-byte struct packing globally (StructMemberAlignment,
-      # MSVC's equivalent of the codebase's GCC-only PACK attribute), which
-      # corrupts layout assumptions in the very latest SDK's winnt.h
-      # (C_ASSERT/subscript errors) -- an older SDK closer to VS2013's
-      # contemporary predates whatever check that is.
+      # project targets). WindowsTargetPlatformVersion is pinned to
+      # 10.0.10240.0 (the original July 2015 Windows 10 RTM SDK -- the
+      # only other one installed on windows-latest besides the newest,
+      # 10.0.26100.0): the project forces 1-byte struct packing globally
+      # (StructMemberAlignment, MSVC's equivalent of the codebase's
+      # GCC-only PACK attribute), which corrupts layout assumptions in
+      # the newest SDK's winnt.h (C_ASSERT/subscript errors) -- this
+      # much older, VS2013-contemporary SDK predates whatever check
+      # that is.
       - name: Build AA.exe (Release|Win32)
         run: >
           msbuild Build/Windows/VC2013/AA/AA.sln
           /p:Configuration=Release
           /p:Platform=Win32
           /p:PlatformToolset=v143
-          /p:WindowsTargetPlatformVersion=10.0
+          /p:WindowsTargetPlatformVersion=10.0.10240.0
 
       - name: Locate build output
         shell: bash
