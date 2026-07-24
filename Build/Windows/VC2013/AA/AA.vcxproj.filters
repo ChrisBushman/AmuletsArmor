@@ -116,6 +116,12 @@
     <ClCompile Include="..\..\..\..\Source\GRAPHIC.C">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\..\..\Source\HIGHRES.C">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\..\Source\PERFPROF.C">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\..\..\Source\GRAPHICS.C">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -437,6 +443,12 @@
       <Filter>Include</Filter>
     </ClInclude>
     <ClInclude Include="..\..\..\..\Include\GRAPHIC.H">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\..\Include\HIGHRES.H">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\..\Include\PERFPROF.H">
       <Filter>Include</Filter>
     </ClInclude>
     <ClInclude Include="..\..\..\..\Include\GRAPHICS.H">

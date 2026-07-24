@@ -162,7 +162,7 @@
       <ShowProgress>NotSet</ShowProgress>
       <GenerateMapFile>true</GenerateMapFile>
       <SuppressStartupBanner>true</SuppressStartupBanner>
-      <AdditionalDependencies>kernel32.lib;SDL.lib;SDLmain.lib;SDL_net.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;%(AdditionalDependencies);Psapi.lib</AdditionalDependencies>
+      <AdditionalDependencies>kernel32.lib;SDL.lib;SDLmain.lib;SDL_net.lib;legacy_stdio_definitions.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;%(AdditionalDependencies);Psapi.lib</AdditionalDependencies>
       <IgnoreAllDefaultLibraries>
       </IgnoreAllDefaultLibraries>
       <NoEntryPoint>false</NoEntryPoint>
@@ -204,7 +204,7 @@
       <ShowProgress>NotSet</ShowProgress>
       <GenerateMapFile>true</GenerateMapFile>
       <SuppressStartupBanner>true</SuppressStartupBanner>
-      <AdditionalDependencies>kernel32.lib;SDL.lib;SDLmain.lib;SDL_net.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;%(AdditionalDependencies);Psapi.lib</AdditionalDependencies>
+      <AdditionalDependencies>kernel32.lib;SDL.lib;SDLmain.lib;SDL_net.lib;legacy_stdio_definitions.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;%(AdditionalDependencies);Psapi.lib</AdditionalDependencies>
       <IgnoreAllDefaultLibraries>
       </IgnoreAllDefaultLibraries>
       <NoEntryPoint>false</NoEntryPoint>
@@ -245,7 +245,7 @@
       <ShowProgress>NotSet</ShowProgress>
       <GenerateMapFile>true</GenerateMapFile>
       <SuppressStartupBanner>true</SuppressStartupBanner>
-      <AdditionalDependencies>kernel32.lib;SDL.lib;SDLmain.lib;SDL_net.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;%(AdditionalDependencies);Psapi.lib</AdditionalDependencies>
+      <AdditionalDependencies>kernel32.lib;SDL.lib;SDLmain.lib;SDL_net.lib;legacy_stdio_definitions.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;%(AdditionalDependencies);Psapi.lib</AdditionalDependencies>
       <IgnoreAllDefaultLibraries>
       </IgnoreAllDefaultLibraries>
       <NoEntryPoint>false</NoEntryPoint>
@@ -286,7 +286,7 @@
       <ShowProgress>NotSet</ShowProgress>
       <GenerateMapFile>true</GenerateMapFile>
       <SuppressStartupBanner>true</SuppressStartupBanner>
-      <AdditionalDependencies>kernel32.lib;SDL.lib;SDLmain.lib;SDL_net.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;%(AdditionalDependencies);Psapi.lib</AdditionalDependencies>
+      <AdditionalDependencies>kernel32.lib;SDL.lib;SDLmain.lib;SDL_net.lib;legacy_stdio_definitions.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;%(AdditionalDependencies);Psapi.lib</AdditionalDependencies>
       <IgnoreAllDefaultLibraries>
       </IgnoreAllDefaultLibraries>
       <NoEntryPoint>false</NoEntryPoint>
@@ -332,7 +332,7 @@
       <ShowProgress>NotSet</ShowProgress>
       <GenerateMapFile>true</GenerateMapFile>
       <SuppressStartupBanner>true</SuppressStartupBanner>
-      <AdditionalDependencies>kernel32.lib;SDL.lib;SDLmain.lib;sdl_net.lib</AdditionalDependencies>
+      <AdditionalDependencies>kernel32.lib;SDL.lib;SDLmain.lib;sdl_net.lib;legacy_stdio_definitions.lib</AdditionalDependencies>
       <SubSystem>Windows</SubSystem>
       <AssemblyDebug>true</AssemblyDebug>
     </Link>
@@ -373,7 +373,7 @@
       <ShowProgress>NotSet</ShowProgress>
       <GenerateMapFile>true</GenerateMapFile>
       <SuppressStartupBanner>true</SuppressStartupBanner>
-      <AdditionalDependencies>kernel32.lib;SDL.lib;SDLmain.lib;sdl_net.lib</AdditionalDependencies>
+      <AdditionalDependencies>kernel32.lib;SDL.lib;SDLmain.lib;sdl_net.lib;legacy_stdio_definitions.lib</AdditionalDependencies>
       <SubSystem>Windows</SubSystem>
       <AssemblyDebug>true</AssemblyDebug>
     </Link>
@@ -419,6 +419,8 @@
     <ClCompile Include="..\..\..\..\Source\FORM.C" />
     <ClCompile Include="..\..\..\..\Source\GRAPHIC.C" />
     <ClCompile Include="..\..\..\..\Source\GRAPHICS.C" />
+    <ClCompile Include="..\..\..\..\Source\HIGHRES.C" />
+    <ClCompile Include="..\..\..\..\Source\PERFPROF.C" />
     <ClCompile Include="..\..\..\..\Source\GUILDUI.C" />
     <ClCompile Include="..\..\..\..\Source\HARDFORM.C" />
     <ClCompile Include="..\..\..\..\Source\HOUSEUI.C" />
@@ -533,6 +535,8 @@
     <ClInclude Include="..\..\..\..\Include\GENERAL.H" />
     <ClInclude Include="..\..\..\..\Include\GRAPHIC.H" />
     <ClInclude Include="..\..\..\..\Include\GRAPHICS.H" />
+    <ClInclude Include="..\..\..\..\Include\HIGHRES.H" />
+    <ClInclude Include="..\..\..\..\Include\PERFPROF.H" />
     <ClInclude Include="..\..\..\..\Include\GROUP.H" />
     <ClInclude Include="..\..\..\..\Include\GUILDUI.H" />
     <ClInclude Include="..\..\..\..\Include\HARDFORM.H" />
