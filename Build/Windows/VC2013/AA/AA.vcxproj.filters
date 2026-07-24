@@ -826,6 +826,9 @@
     <ClInclude Include="WINDIRECT.H">
       <Filter>Include</Filter>
     </ClInclude>
+    <ClInclude Include="WINPACKFIX.H">
+      <Filter>Include</Filter>
+    </ClInclude>
     <ClInclude Include="options.hpp">
       <Filter>Source Files\Win32</Filter>
     </ClInclude>

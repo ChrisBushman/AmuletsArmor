@@ -138,6 +138,7 @@
       <ExceptionHandling>Sync</ExceptionHandling>
       <SmallerTypeCheck>false</SmallerTypeCheck>
       <StructMemberAlignment>1Byte</StructMemberAlignment>
+      <ForcedIncludeFiles>$(ProjectDir)WINPACKFIX.H;%(ForcedIncludeFiles)</ForcedIncludeFiles>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
       <CompileAsManaged>false</CompileAsManaged>
       <TreatWarningAsError>true</TreatWarningAsError>
@@ -180,6 +181,7 @@
       <ExceptionHandling>Sync</ExceptionHandling>
       <SmallerTypeCheck>false</SmallerTypeCheck>
       <StructMemberAlignment>1Byte</StructMemberAlignment>
+      <ForcedIncludeFiles>$(ProjectDir)WINPACKFIX.H;%(ForcedIncludeFiles)</ForcedIncludeFiles>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
       <CompileAsManaged>false</CompileAsManaged>
       <TreatWarningAsError>true</TreatWarningAsError>
@@ -222,6 +224,7 @@
       <ExceptionHandling>Sync</ExceptionHandling>
       <SmallerTypeCheck>false</SmallerTypeCheck>
       <StructMemberAlignment>1Byte</StructMemberAlignment>
+      <ForcedIncludeFiles>$(ProjectDir)WINPACKFIX.H;%(ForcedIncludeFiles)</ForcedIncludeFiles>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
       <CompileAsManaged>false</CompileAsManaged>
       <TreatWarningAsError>true</TreatWarningAsError>
@@ -263,6 +266,7 @@
       <ExceptionHandling>Sync</ExceptionHandling>
       <SmallerTypeCheck>false</SmallerTypeCheck>
       <StructMemberAlignment>1Byte</StructMemberAlignment>
+      <ForcedIncludeFiles>$(ProjectDir)WINPACKFIX.H;%(ForcedIncludeFiles)</ForcedIncludeFiles>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
       <CompileAsManaged>false</CompileAsManaged>
       <TreatWarningAsError>true</TreatWarningAsError>
@@ -313,6 +317,7 @@
       <ExceptionHandling>false</ExceptionHandling>
       <SmallerTypeCheck>false</SmallerTypeCheck>
       <StructMemberAlignment>1Byte</StructMemberAlignment>
+      <ForcedIncludeFiles>$(ProjectDir)WINPACKFIX.H;%(ForcedIncludeFiles)</ForcedIncludeFiles>
       <FloatingPointExceptions>
       </FloatingPointExceptions>
       <CreateHotpatchableImage>false</CreateHotpatchableImage>
@@ -354,6 +359,7 @@
       <ExceptionHandling>false</ExceptionHandling>
       <SmallerTypeCheck>false</SmallerTypeCheck>
       <StructMemberAlignment>1Byte</StructMemberAlignment>
+      <ForcedIncludeFiles>$(ProjectDir)WINPACKFIX.H;%(ForcedIncludeFiles)</ForcedIncludeFiles>
       <FloatingPointExceptions>
       </FloatingPointExceptions>
       <CreateHotpatchableImage>false</CreateHotpatchableImage>
@@ -665,6 +671,7 @@
     <ClInclude Include="..\..\..\..\Lib\SDL-1.2.15\include\SDL_video.h" />
     <ClInclude Include="..\..\..\..\Source\Win32\ipx_client.h" />
     <ClInclude Include="WINDIRECT.H" />
+    <ClInclude Include="WINPACKFIX.H" />
     <ClInclude Include="options.hpp" />
   </ItemGroup>
   <ItemGroup>

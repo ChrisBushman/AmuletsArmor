@@ -39,22 +39,17 @@ jobs:
       # retarget to whatever's installed (v143, matching VS2022) since
       # the C/C++ actually compiled here is already portable (it also
       # builds fine under GCC/Clang on every other platform this
-      # project targets). WindowsTargetPlatformVersion is pinned to
-      # 10.0.10240.0 (the original July 2015 Windows 10 RTM SDK -- the
-      # only other one installed on windows-latest besides the newest,
-      # 10.0.26100.0): the project forces 1-byte struct packing globally
-      # (StructMemberAlignment, MSVC's equivalent of the codebase's
-      # GCC-only PACK attribute), which corrupts layout assumptions in
-      # the newest SDK's winnt.h (C_ASSERT/subscript errors) -- this
-      # much older, VS2013-contemporary SDK predates whatever check
-      # that is.
+      # project targets). No WindowsTargetPlatformVersion override
+      # needed: AA.vcxproj now force-includes WINPACKFIX.H (see that
+      # file's own comment) to keep <windows.h> from ever being parsed
+      # under this project's global 1-byte struct packing, which is
+      # what broke the newest installed SDK's winnt.h otherwise.
       - name: Build AA.exe (Release|Win32)
         run: >
           msbuild Build/Windows/VC2013/AA/AA.sln
           /p:Configuration=Release
           /p:Platform=Win32
           /p:PlatformToolset=v143
-          /p:WindowsTargetPlatformVersion=10.0.10240.0
 
       - name: Locate build output
         shell: bash

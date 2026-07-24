@@ -49,13 +49,16 @@ rsync -avz --delete \
     --exclude='Build/MacOSX-PPC/build/' \
     "$REPO_ROOT/" "$AA_PPC_HOST:$REMOTE_PATH/"
 
+# Non-interactive SSH sessions don't source .bash_profile/.profile, so
+# Tigerbrew's /usr/local/bin (gmake, sdl-config, ...) isn't on PATH by
+# default here even though it is in an interactive login shell.
 if [ -z "${AA_PPC_MAKE:-}" ]; then
     AA_PPC_MAKE=$(ssh -p "$SSH_PORT" "$AA_PPC_HOST" \
-        'command -v gmake || command -v make')
+        'PATH="/usr/local/bin:$PATH"; command -v gmake || command -v make')
 fi
 
 echo "==> Building on $AA_PPC_HOST ($AA_PPC_MAKE ${MAKE_TARGETS[*]})"
 ssh -p "$SSH_PORT" "$AA_PPC_HOST" \
-    "cd $REMOTE_PATH/Build/MacOSX-PPC && $AA_PPC_MAKE ${MAKE_TARGETS[*]}"
+    "export PATH=/usr/local/bin:\$PATH; cd $REMOTE_PATH/Build/MacOSX-PPC && $AA_PPC_MAKE ${MAKE_TARGETS[*]}"
 
 echo "==> Done. Binary at $REMOTE_PATH/Build/MacOSX-PPC/build/amulets-armor on $AA_PPC_HOST"
