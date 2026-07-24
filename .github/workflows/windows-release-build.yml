@@ -16,6 +16,22 @@ jobs:
       - name: Add MSBuild to PATH
         uses: microsoft/setup-msbuild@v2
 
+      # <TreatWarningAsError>true</TreatWarningAsError> is baked into the
+      # vcxproj as literal item metadata, not a $(Property) reference --
+      # /p:TreatWarningAsError=false on the command line has no effect on
+      # it (item metadata wins over a global property of the same name).
+      # Patch it in this ephemeral checkout only; the committed vcxproj
+      # (and any local VS2013 build from it) is untouched. The modern
+      # MSVC compiler behind v143 surfaces plenty of new warnings
+      # (format-string mismatches, C4091, etc.) on this 30-year-old
+      # codebase that VS2013's compiler never flagged for the same
+      # lines -- fixing all of those is out of scope for a release build.
+      - name: Disable TreatWarningAsError for this CI build
+        shell: bash
+        run: |
+          sed -i 's/<TreatWarningAsError>true<\/TreatWarningAsError>/<TreatWarningAsError>false<\/TreatWarningAsError>/g' \
+            Build/Windows/VC2013/AA/AA.vcxproj
+
       # Build the .sln, not the bare .vcxproj: OutDir in the project is
       # $(SolutionDir)$(Configuration)\, which only resolves correctly
       # with a real solution context. The vendored project targets the
@@ -23,21 +39,20 @@ jobs:
       # retarget to whatever's installed (v143, matching VS2022) since
       # the C/C++ actually compiled here is already portable (it also
       # builds fine under GCC/Clang on every other platform this
-      # project targets).
-      # TreatWarningAsError=false override (not a vcxproj edit, so local
-      # VS2013 builds keep the strict setting): the modern MSVC compiler
-      # behind v143 surfaces plenty of new warnings (format-string
-      # mismatches, C4091, etc.) on this 30-year-old codebase that
-      # VS2013's compiler never flagged for the same lines -- fixing all
-      # of those is out of scope for a release build.
+      # project targets). WindowsTargetPlatformVersion is pinned to an
+      # older, widely-available SDK rather than whatever's newest: the
+      # project forces 1-byte struct packing globally (StructMemberAlignment,
+      # MSVC's equivalent of the codebase's GCC-only PACK attribute), which
+      # corrupts layout assumptions in the very latest SDK's winnt.h
+      # (C_ASSERT/subscript errors) -- an older SDK closer to VS2013's
+      # contemporary predates whatever check that is.
       - name: Build AA.exe (Release|Win32)
         run: >
           msbuild Build/Windows/VC2013/AA/AA.sln
           /p:Configuration=Release
           /p:Platform=Win32
           /p:PlatformToolset=v143
-          /p:WindowsTargetPlatformVersion=10.0
-          /p:TreatWarningAsError=false
+          /p:WindowsTargetPlatformVersion=10.0.19041.0
 
       - name: Locate build output
         shell: bash
