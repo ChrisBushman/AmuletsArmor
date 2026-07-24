@@ -19,7 +19,14 @@
 #include <conio.h>
 #endif
 #include <fcntl.h>
+/* See FILE.C's comment: <io.h> is DOS/Windows-only, UNIXIO_SHIM.H is
+   the Unix substitute (previously named io.h, which shadowed the real
+   system header on Windows). */
+#ifdef TARGET_UNIX
+#include "UNIXIO_SHIM.H"
+#else
 #include <io.h>
+#endif
 #include <malloc.h>
 #include <ctype.h>
 #include <string.h>

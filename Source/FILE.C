@@ -13,7 +13,15 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+/* <io.h> is a DOS/Windows-only CRT header (_dos_findfirst, filelength,
+   ...); Include/UNIXIO_SHIM.H (formerly named io.h -- renamed to stop
+   it silently shadowing the real system header, the same class of bug
+   as the DIRECT.H/WINDIRECT.H collision) is the Unix substitute. */
+#ifdef TARGET_UNIX
+#include "UNIXIO_SHIM.H"
+#else
 #include <io.h>
+#endif
 #include "FILE.H"
 #include "MEMORY.H"
 #include "SOUND.H"

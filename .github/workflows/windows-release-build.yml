@@ -24,6 +24,12 @@ jobs:
       # the C/C++ actually compiled here is already portable (it also
       # builds fine under GCC/Clang on every other platform this
       # project targets).
+      # TreatWarningAsError=false override (not a vcxproj edit, so local
+      # VS2013 builds keep the strict setting): the modern MSVC compiler
+      # behind v143 surfaces plenty of new warnings (format-string
+      # mismatches, C4091, etc.) on this 30-year-old codebase that
+      # VS2013's compiler never flagged for the same lines -- fixing all
+      # of those is out of scope for a release build.
       - name: Build AA.exe (Release|Win32)
         run: >
           msbuild Build/Windows/VC2013/AA/AA.sln
@@ -31,6 +37,7 @@ jobs:
           /p:Platform=Win32
           /p:PlatformToolset=v143
           /p:WindowsTargetPlatformVersion=10.0
+          /p:TreatWarningAsError=false
 
       - name: Locate build output
         shell: bash

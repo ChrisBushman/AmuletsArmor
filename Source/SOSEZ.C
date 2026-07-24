@@ -22,7 +22,15 @@
 #if defined(DOS32)
 #include <bios.h>
 #endif
+/* See FILE.C's comment: <io.h> is DOS/Windows-only, UNIXIO_SHIM.H is
+   the Unix substitute (previously named io.h, which shadowed the real
+   system header on Windows). Dead code today (USE_SOS_LIBRARY isn't
+   defined anywhere), fixed for consistency regardless. */
+#ifdef TARGET_UNIX
+#include "UNIXIO_SHIM.H"
+#else
 #include <io.h>
+#endif
 #include <malloc.h>
 #include <conio.h>
 #include <ctype.h>
