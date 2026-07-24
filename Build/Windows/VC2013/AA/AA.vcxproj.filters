@@ -311,6 +311,9 @@
     <ClCompile Include="main.c">
       <Filter>Source Files\Win32</Filter>
     </ClCompile>
+    <ClCompile Include="iob_compat.c">
+      <Filter>Source Files\Win32</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\..\..\Source\SOSEZ.C">
       <Filter>Source Files</Filter>
     </ClCompile>

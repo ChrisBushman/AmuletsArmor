@@ -493,6 +493,7 @@
       <Optimization Condition="'$(Configuration)|$(Platform)'=='Debug Multi|x64'">Disabled</Optimization>
     </ClCompile>
     <ClCompile Include="misc.c" />
+    <ClCompile Include="iob_compat.c" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\..\..\Include\3D_COLLI.H" />
