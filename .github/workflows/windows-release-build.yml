@@ -1,0 +1,44 @@
+name: Windows release build
+
+# One-off/manual build for release packaging, not a permanent CI gate --
+# see Build/Windows/VC2013/AA/AA.vcxproj (the vendored VS2013 project this
+# reuses via msbuild). Triggered by hand from the Actions tab or `gh
+# workflow run windows-release-build.yml`.
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v2
+
+      # Build the .sln, not the bare .vcxproj: OutDir in the project is
+      # $(SolutionDir)$(Configuration)\, which only resolves correctly
+      # with a real solution context. The vendored project targets the
+      # VS2013 (v120) toolset, which windows-latest doesn't ship --
+      # retarget to whatever's installed (v143, matching VS2022) since
+      # the C/C++ actually compiled here is already portable (it also
+      # builds fine under GCC/Clang on every other platform this
+      # project targets).
+      - name: Build AA.exe (Release|Win32)
+        run: >
+          msbuild Build/Windows/VC2013/AA/AA.sln
+          /p:Configuration=Release
+          /p:Platform=Win32
+          /p:PlatformToolset=v143
+          /p:WindowsTargetPlatformVersion=10.0
+
+      - name: Locate build output
+        shell: bash
+        run: |
+          find Build/Windows/VC2013 -iname 'AA.exe'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AA-windows
+          path: Build/Windows/VC2013/AA/Release/AA.exe
+          if-no-files-found: error

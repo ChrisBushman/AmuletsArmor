@@ -17,6 +17,7 @@ Build/Windows/VC2013/**/*.user
 # Native binaries built locally for release packaging -- these ship as
 # GitHub Release assets, not committed into the tree.
 /Exe/amulets-armor
+/dist/
 
 # CMake/Ninja outputs if generated at repo root
 /CMakeFiles/
