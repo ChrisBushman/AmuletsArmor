@@ -2,9 +2,6 @@
 #include <string.h>
 #include "ipx_client.h"
 #include <time.h>
-#ifdef _MSC_VER
-#pragma pack(1)
-#endif
 
 #if defined(TARGET_UNIX) && defined(AA_REAL_SDL12)
 /* Real SDL 1.2 (e.g. Tigerbrew on PPC/Tiger) installs headers at the
@@ -18,7 +15,28 @@
 #elif defined(TARGET_UNIX)
 #include <SDL2/SDL_net.h>
 #else
+/* Temporarily restore normal alignment for SDL_net.h (which pulls in
+   <windows.h>): this project forces 1-byte struct packing globally
+   (StructMemberAlignment/#pragma pack(1) below, MSVC's equivalent of
+   this codebase's GCC_ATTRIBUTE(packed) used a few lines down), and
+   parsing windows.h under that setting breaks several of its own
+   internal compile-time size checks (see Build/Windows/VC2013/AA/
+   WINPACKFIX.H's comment for the full story). */
+#ifdef _MSC_VER
+#pragma pack(push, 8)
+#endif
 #include "SDL_net.h"
+#ifdef _MSC_VER
+#pragma pack(pop)
+#endif
+#endif
+
+/* GCC_ATTRIBUTE(packed) (used a few lines down, e.g. struct PackedIP)
+   is a no-op under MSVC -- pack(1) is what actually packs those
+   structs there. Set only now, after every system/SDL header above
+   has already been parsed under normal alignment. */
+#ifdef _MSC_VER
+#pragma pack(1)
 #endif
 extern "C" {
 #ifdef TARGET_UNIX
