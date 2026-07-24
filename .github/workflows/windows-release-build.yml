@@ -26,6 +26,11 @@ jobs:
       # (format-string mismatches, C4091, etc.) on this 30-year-old
       # codebase that VS2013's compiler never flagged for the same
       # lines -- fixing all of those is out of scope for a release build.
+      - name: List installed Windows SDKs
+        shell: bash
+        run: |
+          ls "/c/Program Files (x86)/Windows Kits/10/Include/" || true
+
       - name: Disable TreatWarningAsError for this CI build
         shell: bash
         run: |
@@ -52,7 +57,7 @@ jobs:
           /p:Configuration=Release
           /p:Platform=Win32
           /p:PlatformToolset=v143
-          /p:WindowsTargetPlatformVersion=10.0.19041.0
+          /p:WindowsTargetPlatformVersion=10.0
 
       - name: Locate build output
         shell: bash
