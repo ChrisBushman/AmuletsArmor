@@ -6,7 +6,10 @@
 #include <stdlib.h>
 #include <string.h>
 #else
-#include <Windows.h>
+/* Not a raw #include <Windows.h>: this project's global 1-byte struct
+   packing corrupts several of windows.h's own internal compile-time
+   size checks (see WINPACKFIX.H's own comment for the full story). */
+#include "WINPACKFIX.H"
 #endif
 #include "DITALK.H"
 #if defined(_DEBUG) && defined(_MSC_VER)

@@ -1,22 +1,18 @@
-/* Forced-included (see AA.vcxproj's ForcedIncludeFiles) into every
- * translation unit in this project, before anything else -- including
- * before the project's own -Zp1/StructMemberAlignment=1Byte setting
- * (MSVC's equivalent of the codebase's GCC-only PACK attribute) has a
- * chance to affect anything.
+/* Included from main.c in place of a raw #include <Windows.h>. This
+ * project forces 1-byte struct packing globally (StructMemberAlignment,
+ * MSVC's equivalent of the codebase's GCC-only PACK attribute), which
+ * breaks several of windows.h's own internal compile-time size checks
+ * if it's parsed under that setting (visible as winnt.h "C_ASSERT:
+ * redefinition; different subscripts" / "negative subscript" errors on
+ * a modern Windows SDK) -- restore normal alignment just for windows.h
+ * itself.
  *
- * <windows.h> is pulled in both directly (main.c) and transitively via
- * SDL's own Windows headers, and only gets fully parsed the *first*
- * time it's hit in a given translation unit (its own #ifndef include
- * guard skips every subsequent #include <windows.h>). If that first
- * parse happens under 1-byte packing, several of its internal
- * compile-time size assertions (visible as winnt.h "C_ASSERT:
- * redefinition; different subscripts" / "negative subscript" errors)
- * break, because plenty of SDK structs were never meant to be packed
- * this tightly. Forcing the *first* parse to happen right here, under
- * normal 8-byte alignment, sidesteps that: every later #include
- * <windows.h> elsewhere in the same translation unit is then just a
- * no-op against the same already-parsed, already-correct definitions.
- */
+ * Deliberately NOT force-included project-wide: most of this codebase
+ * (e.g. SOUND.C's SOS.H-family headers) defines its own legacy
+ * DOS-era HANDLE/BOOL/WORD/etc. typedefs and was never meant to see
+ * the real Windows API types -- pulling windows.h into every
+ * translation unit made those clash. main.c is the only file that
+ * actually needs it. */
 #ifndef AA_WINPACKFIX_H
 #define AA_WINPACKFIX_H
 
