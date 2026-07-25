@@ -114,13 +114,20 @@ static T_void IInventoryDecodeItemDesc(
         p_out->subtype = p_legacy->subtype;
         p_out->numstackable = p_legacy->numstackable;
         for (i = 0; i < MAX_ITEM_EFFECTS; i++) {
+            T_word16 j;
             p_out->effectTriggerOn[i] = p_legacy->effectTriggerOn[i];
             p_out->effectType[i] = p_legacy->effectType[i];
             memcpy(p_out->effectData[i], p_legacy->effectData[i],
                    sizeof(p_out->effectData[i]));
+            /* effectData is a raw on-disk T_word16, little-endian like
+               every other resource in this codebase -- must be swapped
+               on a big-endian host (see ISwapInventoryItem's identical
+               fix for the save-game format of this same struct). */
+            for (j = 0; j < 3; j++)
+                p_out->effectData[i][j] = EndianLE16(p_out->effectData[i][j]);
         }
         p_out->objectDestroyOn = p_legacy->objectDestroyOn;
-        p_out->useable = p_legacy->useable;
+        p_out->useable = EndianLE16(p_legacy->useable);
         p_out->unique = p_legacy->unique;
         DebugEnd();
         return;
@@ -142,13 +149,18 @@ static T_void IInventoryDecodeItemDesc(
         p_out->subtype      = p_disk->subtype;
         p_out->numstackable = p_disk->numstackable;
         for (i = 0; i < MAX_ITEM_EFFECTS; i++) {
+            T_word16 j;
             p_out->effectTriggerOn[i] = p_disk->effectTriggerOn[i];
             p_out->effectType[i]      = p_disk->effectType[i];
             memcpy(p_out->effectData[i], p_disk->effectData[i],
                    sizeof(p_out->effectData[i]));
+            /* See the Legacy9 branch above -- same raw-little-endian
+               on-disk field, same fix. */
+            for (j = 0; j < 3; j++)
+                p_out->effectData[i][j] = EndianLE16(p_out->effectData[i][j]);
         }
         p_out->objectDestroyOn = p_disk->objectDestroyOn;
-        p_out->useable         = p_disk->useable;
+        p_out->useable         = EndianLE16(p_disk->useable);
         p_out->unique          = p_disk->unique;
         DebugEnd();
         return;
@@ -157,7 +169,14 @@ static T_void IInventoryDecodeItemDesc(
 
     /* Native layout: direct copy. */
     if (descSize >= sizeof(T_equipItemDescription)) {
+        T_word16 i, j;
         memcpy(p_out, p_desc, sizeof(T_equipItemDescription));
+        /* See the Legacy9 branch above -- effectData/useable are raw
+           on-disk little-endian T_word16s, same fix. */
+        for (i = 0; i < MAX_ITEM_EFFECTS; i++)
+            for (j = 0; j < 3; j++)
+                p_out->effectData[i][j] = EndianLE16(p_out->effectData[i][j]);
+        p_out->useable = EndianLE16(p_out->useable);
         DebugEnd();
         return;
     }

@@ -1420,7 +1420,13 @@ T_void SoundSetBackgroundMusic(T_byte8 *filename)
             }
 
             // Load the new music (even if we are not going to play it yet)
-            sprintf(realFilename, "AAMUSIC\\%s.MUS", filename);
+            /* Forward slash, not backslash -- every other resource path in
+               this codebase already uses "/" (Unix has no path-separator
+               meaning for "\"), this was the one spot still using the
+               original DOS-style separator, silently failing to find any
+               music file on TARGET_UNIX (both the raw open() and the
+               case-insensitive fallback in FILE.C split on "/" only). */
+            sprintf(realFilename, "AAMUSIC/%s.MUS", filename);
             file = FileOpen(realFilename, FILE_MODE_READ) ;
             if (file != FILE_BAD) {
                 length = FileGetSize(realFilename)/2;
