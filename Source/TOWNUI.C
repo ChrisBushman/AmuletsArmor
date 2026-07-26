@@ -339,8 +339,8 @@ T_void TownUIEnd(T_void)
         ButtonDelete(G_userDnButton);
         G_userUpButton = NULL;
         G_userDnButton = NULL;
-        G_userScrollBar = NULL;
         GraphicDelete(G_userScrollBar);
+        G_userScrollBar = NULL;
         TxtboxDelete(G_userListBox);
         TxtboxDelete(G_chatBox);
         TxtboxDelete(G_listenBox);

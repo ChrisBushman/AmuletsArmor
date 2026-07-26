@@ -140,7 +140,11 @@ struct packetBuffer {
 #define CONVIPX(hostvar) hostvar[0], hostvar[1], hostvar[2], hostvar[3], hostvar[4], hostvar[5]
 
 static IPaddress ipxServConnIp;			// IPAddress for client connection to server
-static Bit16u udpPort = 213;
+/* Historically 213 (the DOSBox IPX-tunnel convention), but that's a
+   privileged port on Unix-like systems -- moved to an unprivileged
+   default matching AAServer's DEFAULT_IPX_PORT so client/server agree
+   without needing root. Still overridable via IPXSetPort(). */
+static Bit16u udpPort = 21300;
 
 void IPXSetPort(int port) {
     udpPort = (Bit16u)port;

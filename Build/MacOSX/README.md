@@ -62,7 +62,8 @@ and `Build/DOS/clean.bat`.
 ## Multiplayer
 
 Pass the server IP as the first argument and an optional port as the second.
-The port defaults to 213 (the original IPX-over-UDP port).
+The port defaults to 21300 (an unprivileged port; the original IPX-over-UDP
+port 213 required root to bind on Unix-like systems).
 
 ```sh
 cd Exe

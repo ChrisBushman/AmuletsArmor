@@ -34,6 +34,8 @@
 #include "ENDIAN_AA.H"
 #include "VIEW.H"
 #include <direct.h>
+#include <errno.h>
+#include <string.h>
 
 #ifdef TARGET_UNIX
 #define STATS_CHARACTER_FILE_FMT "S%07d/CHDATA%02d"
@@ -3725,6 +3727,9 @@ E_Boolean StatsSaveCharacter (T_byte8 selected)
         else
         {
             /* inform user of error */
+            printf("StatsSaveCharacter: fopen(\"%s\", \"wb\") failed: %s\n",
+                filename, strerror(errno));
+            fflush(stdout);
             PromptDisplayMessage ("File I/O error saving character.");
             success=FALSE;
         }
