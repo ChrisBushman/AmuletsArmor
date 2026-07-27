@@ -71,12 +71,46 @@ T_sword32 MultAndShift32(
            T_sword32 a,
            T_sword32 b) ;
 */
-#define MultAndShift32(a, b)  ((T_sword32)(((((double)(a)) * ((double)(b))) / 65536.0) / 65536.0))
-#define MultAndShift22(a, b)  ((T_sword32)((((double)(a)) * ((double)(b))) / 4194304.0))
-#define MultAndShift16(a, b)  ((T_sword32)((((double)(a)) * ((double)(b))) / 65536.0))
-#define MultAndShift6(a, b)  ((T_sword32)((((double)(a)) * ((double)(b))) / 64.0))
-#define MultAndShift4(a, b)  ((T_sword32)((((double)(a)) * ((double)(b))) / 16.0))
-#define Div32by32To1616Asm(a, b)  ((T_sword32)( (((double)(a)) * 65536.0) / ((double)(b))) )
+/* Portable equivalents of the Watcom/DOS `imul`+`shrd` pairs below:
+   widen to a genuine 64-bit product (no overflow for any T_sword32
+   inputs) and arithmetic-shift right by the same amount the asm's
+   `shrd` funnel-shift does. This used to go through `double` instead
+   (`(a*b)/65536.0` etc.) -- portable, but pulls in FPU/double-precision
+   math this codebase otherwise avoids in its hot paths, which matters
+   for a Sega Saturn port: the SH-2 has no FPU, so double arithmetic
+   there is emulated in software, one multiply-heavy 3D_VIEW.C call at
+   a time. `int64_t` (not this file's own T_sword64, which is plain
+   `long` -- only guaranteed 32 bits on an LP32/ILP32 target like the
+   SH-2) keeps this correct on a 32-bit target too.
+   One real behavior difference from the `double` version: C's cast
+   -to-int truncates toward zero, while `>>` on a negative value is an
+   arithmetic (floor) shift on every compiler that matters here --
+   e.g. MultAndShift16(-1, 32768) is 0 the double way but -1 this way.
+   The floor behavior is what `shrd` actually does in the original DOS
+   asm (and what these functions' own "(a*b) >> N" doc comments say),
+   so this is a correctness fix for negative operands relative to the
+   double fallback, not a new behavior -- but it's a real output change
+   on this fallback path, worth knowing if a Mac/PPC/IRIX build's
+   rendering output ever gets compared before/after this change. */
+#include <stdint.h>
+#define MultAndShift32(a, b)  ((T_sword32)(((int64_t)(a) * (int64_t)(b)) >> 32))
+#define MultAndShift22(a, b)  ((T_sword32)(((int64_t)(a) * (int64_t)(b)) >> 22))
+#define MultAndShift16(a, b)  ((T_sword32)(((int64_t)(a) * (int64_t)(b)) >> 16))
+#define MultAndShift6(a, b)  ((T_sword32)(((int64_t)(a) * (int64_t)(b)) >> 6))
+#define MultAndShift4(a, b)  ((T_sword32)(((int64_t)(a) * (int64_t)(b)) >> 4))
+/* b == 0 happens in real gameplay (e.g. a wall edge projecting to a
+   zero-width screen-space column, dx == 0) -- confirmed the hard way,
+   this crashed every time on entering a quest before this guard was
+   added. Integer division by zero is a hardware trap (SIGFPE) on every
+   platform this ships on; the `double` version this replaced instead
+   silently produced +-inf and, however undefined the inf-to-int cast
+   technically is, never actually crashed on any real compiler here.
+   Saturating to T_sword32's min/max on the sign of `a` isn't a
+   *correct* value -- there isn't one, the original DOS asm's `idiv`
+   would have hit the exact same trap -- it's a deliberately-chosen
+   "stay alive and keep rendering" fallback matching what the double
+   path's behavior amounted to in practice. */
+#define Div32by32To1616Asm(a, b)  ((T_sword32)((b) != 0 ? (((int64_t)(a) << 16) / (int64_t)(b)) : ((a) < 0 ? INT32_MIN : INT32_MAX)))
 #else
 /* f(a, b) = (a * b) >> 4 */
 T_sword32 MultAndShift6(
