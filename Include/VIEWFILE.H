@@ -123,14 +123,25 @@ typedef struct {
    address, so a raw `*TX_PTR_FIELD(x) = ptr` pointer store/load faults
    with SIGBUS on strict-alignment targets (confirmed on the SGI O2/
    MIPS port). TX_PTR_GET/TX_PTR_SET route the pointer's bytes through
-   AlignedGetW32/AlignedSetW32 (see ENDIAN_AA.H) instead of a direct
-   dereference -- pointers are 4 bytes on every ABI this codebase
-   targets (Win32, Mac PPC32, MIPS N32), matching T_word32. Use these
-   in place of `*TX_PTR_FIELD(...)` everywhere. */
+   AlignedGetPtr/AlignedSetPtr (see ENDIAN_AA.H) instead of a direct
+   dereference.
+   This used to go through AlignedGetW32/AlignedSetW32 (fixed width,
+   32 bits) on the claim that "pointers are 4 bytes on every ABI this
+   codebase targets (Win32, Mac PPC32, MIPS N32), matching T_word32" --
+   true for all of those, but not for a modern 64-bit (LP64) macOS/
+   TARGET_UNIX build: T_uintptr_t there is a real 8-byte uintptr_t, and
+   storing one through a 32-bit-wide accessor silently truncated every
+   locked texture pointer to its low 32 bits. Confirmed the hard way:
+   this crashed wall rendering (IAddMainWall -> PictureGetXYSize) with
+   a wild pointer on the very first quest/level load on Intel macOS.
+   AlignedGetPtr/AlignedSetPtr are sized off sizeof(T_uintptr_t)
+   instead, so this is correct on both the original 32-bit targets and
+   a 64-bit one -- use these in place of `*TX_PTR_FIELD(...)`
+   everywhere. */
 #define TX_PTR_GET(txField) \
-    ((T_byte8 *)(T_uintptr_t)AlignedGetW32(TX_PTR_FIELD(txField)))
+    ((T_byte8 *)AlignedGetPtr(TX_PTR_FIELD(txField)))
 #define TX_PTR_SET(txField, val) \
-    (AlignedSetW32(TX_PTR_FIELD(txField), (T_word32)(T_uintptr_t)(val)))
+    (AlignedSetPtr(TX_PTR_FIELD(txField), (T_uintptr_t)(val)))
 
 /** Defines for light animation types. **/
 #define SECTOR_LIGHT_ANIM_NONE      0

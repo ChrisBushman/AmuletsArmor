@@ -179,6 +179,49 @@ static inline T_void AlignedSetW32(T_void *p, T_word32 v)
 #endif
 }
 
+/* Pointer-width aligned accessors -- for the VIEWFILE.H TX_PTR_GET/SET
+   trick (caching a real runtime pointer inside an on-disk texture-name
+   byte array's spare bytes; see that file's own comment for why it's
+   done this way at all). T_uintptr_t (GENERAL.H) is a real 8-byte
+   uintptr_t on a 64-bit TARGET_UNIX host and T_word32 (4 bytes)
+   everywhere else (original DOS/Win32 32-bit target) -- confirmed the
+   hard way that routing a native pointer through the 32-bit-only
+   AlignedGetW32/AlignedSetW32 (as TX_PTR_GET/SET used to, unmodified
+   since the original 32-bit-only codebase) truncates it to its low 32
+   bits on 64-bit hosts, corrupting the cached pointer into a wild
+   address the next time it's read back: this is what was actually
+   crashing wall rendering (IAddMainWall -> PictureGetXYSize) after the
+   OBJTYPE.C picture-locking bug was fixed. Sized off sizeof(T_uintptr_t)
+   rather than a fixed width so this stays correct on the original
+   32-bit target too. */
+static inline T_uintptr_t AlignedGetPtr(const T_void *p)
+{
+    const T_byte8 *b = (const T_byte8 *)p ;
+    T_uintptr_t v = 0 ;
+    size_t i ;
+#if AA_BIG_ENDIAN
+    for (i = 0 ; i < sizeof(T_uintptr_t) ; i++)
+        v = (v << 8) | (T_uintptr_t)IAlignedByteGet(b + i) ;
+#else
+    for (i = 0 ; i < sizeof(T_uintptr_t) ; i++)
+        v |= ((T_uintptr_t)IAlignedByteGet(b + i)) << (8 * i) ;
+#endif
+    return v ;
+}
+
+static inline T_void AlignedSetPtr(T_void *p, T_uintptr_t v)
+{
+    T_byte8 *b = (T_byte8 *)p ;
+    size_t i ;
+#if AA_BIG_ENDIAN
+    for (i = 0 ; i < sizeof(T_uintptr_t) ; i++)
+        IAlignedByteSet(b + i, (T_byte8)(v >> (8 * (sizeof(T_uintptr_t) - 1 - i)))) ;
+#else
+    for (i = 0 ; i < sizeof(T_uintptr_t) ; i++)
+        IAlignedByteSet(b + i, (T_byte8)(v >> (8 * i))) ;
+#endif
+}
+
 /* In-place variants, for swapping a field that lives in a struct or a raw
    resource/packet buffer. Built on the byte-wise Aligned accessors above
    (not memcpy -- see the comment there for why that isn't safe on every
