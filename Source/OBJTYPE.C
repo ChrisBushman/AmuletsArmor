@@ -294,9 +294,39 @@ static T_objectType *IObjTypeExpandForUnix(T_objectType *p_typeDisk, T_word32 si
         }
     }
 
-    extraBytes = totalPics * (sizeof(T_objectPic) - sizeof(T_objectPicDisk32)) ;
+    /* The write pass below doesn't grow each on-disk T_objectPicDisk32
+       slot in place -- it appends a brand new, contiguous, 4-byte
+       -aligned T_objectPic array for *every* picture after a full
+       verbatim copy of the original disk bytes (see writeOffset,
+       starting right after sizeObjType). That needs room for the
+       whole new array, not just the per-slot size difference: got
+       this wrong the obvious way first (totalPics * (sizeof(T_objectPic)
+       - sizeof(T_objectPicDisk32)), i.e. only the *growth*, as if pics
+       were being resized in place) and it silently under-allocated for
+       any object type with enough pictures that totalPics * 14 still
+       landed under the old 4096 floor while totalPics * 24 didn't --
+       208 pictures (2912 vs. 4992 bytes needed) was enough to crash a
+       quest-start on a real object type. The write loop's own bounds
+       check (`writeOffset + angles*sizeof(T_objectPic) > newSize`)
+       makes running out of room *safe* -- it just breaks -- but every
+       frame it never got to keeps its original on-disk offsetPicList
+       value, which later code then reads as if it were a valid offset
+       into this (24-byte-stride) array, landing on whatever raw disk
+       bytes happen to be there.
+
+       Still not quite enough on its own: writeOffset's actual starting
+       point (below) is sizeObjType rounded *up* to a 4-byte boundary,
+       up to 3 bytes more than sizeObjType itself, and that padding
+       isn't accounted for here -- confirmed the hard way (again) on
+       the same real object type this was first found on: 2386-byte
+       sizeObjType (2 bytes short of 4-byte-aligned) needed 7380 bytes
+       total but this was still only allocating 7378, just enough to
+       make the bounds check above drop the very last frame. +3 covers
+       the maximum possible rounding. */
+    extraBytes = 3 + (totalPics * sizeof(T_objectPic)) ;
     if (extraBytes < 4096)
         extraBytes = 4096 ;
+
     newSize = sizeObjType + extraBytes ;
     p_copy = (T_objectType *)MemAlloc(newSize) ;
     if (p_copy == NULL)
