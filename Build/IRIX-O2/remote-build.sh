@@ -56,6 +56,7 @@ TAR_EXCLUDES=(
     --exclude='build_*'
     --exclude='Build/MacOSX-PPC/build'
     --exclude='Build/IRIX-O2/build'
+    --exclude='dist'
 )
 if [ "$SYNC_ASSETS" -eq 0 ]; then
     TAR_EXCLUDES+=(--exclude='Exe')

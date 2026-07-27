@@ -47,6 +47,7 @@ rsync -avz --delete \
     --exclude='build/' \
     --exclude='build_*/' \
     --exclude='Build/MacOSX-PPC/build/' \
+    --exclude='dist/' \
     "$REPO_ROOT/" "$AA_PPC_HOST:$REMOTE_PATH/"
 
 # Non-interactive SSH sessions don't source .bash_profile/.profile, so
