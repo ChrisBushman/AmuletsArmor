@@ -1,0 +1,56 @@
+name: Linux release build
+
+# One-off/manual build for release packaging, not a permanent CI gate --
+# same role as windows-release-build.yml, but for the native Linux CMake
+# path in Build/Linux/. Triggered by hand from the Actions tab or
+# `gh workflow run linux-release-build.yml`.
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build pkg-config \
+            libsdl1.2-dev libsdl2-net-dev
+
+      - name: Configure
+        run: cmake -S . -B out/linux -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build amulets-armor
+        run: cmake --build out/linux --target amulets-armor -j
+
+      # Matches the payload_root() convention AmuletsArmor-Bundle's
+      # scripts/merge.py expects for every non-macOS/PPC platform: a
+      # single top-level "<repo>-<platform-suffix>" folder inside the
+      # archive, containing the binary alongside the game's own Exe/ data.
+      #
+      # lib/ bundles the SDL runtime libs the binary actually links
+      # against (its $ORIGIN/lib rpath, set in CMakeLists.txt, finds them
+      # there) so the release doesn't require the end user to install
+      # sdl12-compat/SDL2_net themselves -- everything else ldd reports
+      # (libasound, libpulse, libX11, ...) is a base system/desktop
+      # library assumed already present, the same "don't bundle system
+      # libs" philosophy AmuletsArmor-Bundle's macOS merge already uses.
+      - name: Package release archive
+        run: |
+          STAGE=AmuletsArmor-Linux
+          mkdir -p "$STAGE/lib"
+          cp -r Exe/. "$STAGE/"
+          cp out/linux/amulets-armor "$STAGE/"
+          chmod +x "$STAGE/amulets-armor"
+          for lib in $(ldd out/linux/amulets-armor | awk '/libSDL/ {print $3}'); do
+            cp -L "$lib" "$STAGE/lib/"
+          done
+          tar czf AmuletsArmor-Linux.tar.gz "$STAGE"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AmuletsArmor-Linux
+          path: AmuletsArmor-Linux.tar.gz
+          if-no-files-found: error

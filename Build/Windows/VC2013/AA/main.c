@@ -15,7 +15,22 @@
 #if defined(_DEBUG) && defined(_MSC_VER)
    #include <crtdbg.h>
 #endif
+#if defined(AA_GENERIC_UNIX_MAIN)
+/* On a "plain" Unix/X11 target (see the AA_GENERIC_UNIX_MAIN block below),
+   this codebase's own -DWIN32=1 (needed by real WIN32-guarded branches
+   elsewhere in Source/*.C, unrelated to SDL) leaks into SDL_platform.h's
+   own `#if defined(WIN32) ...` sniffing and makes it define __WIN32__,
+   which makes SDL_main.h #define main SDL_main -- fine on real
+   Windows/macOS (a real SDLmain provides the actual main() that calls
+   SDL_main()), but on Linux there is no such shim, so the binary links
+   with no main() at all. Hide WIN32 from SDL's own headers only; restore
+   it immediately after for the rest of this file and everything else. */
+#undef WIN32
 #include <SDL.h>
+#define WIN32 1
+#else
+#include <SDL.h>
+#endif
 #include "resource.h"
 
 #ifdef TARGET_UNIX

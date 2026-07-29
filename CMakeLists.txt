@@ -32,10 +32,12 @@ set(AA_PLATFORM_SOURCES
 
 list(APPEND AA_PLATFORM_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source/Win32/ipx_client.cpp")
 
-if(APPLE)
+if(UNIX)
     # TRUE-HIGHRES: RESSCALE lives under Source/Win32 (with ipx_client.cpp)
     # so it isn't picked up by the Source/*.C glob above; HIGHRES.C is
-    # directly under Source/ and is picked up automatically.
+    # directly under Source/ and is picked up automatically. Needed on
+    # both macOS and Linux -- anywhere the Windows VC2013 project doesn't
+    # already wire it in some other way.
     list(APPEND AA_PLATFORM_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source/Win32/RESSCALE.C")
     set_source_files_properties(
         "${CMAKE_CURRENT_SOURCE_DIR}/Source/Win32/RESSCALE.C"
@@ -86,16 +88,45 @@ target_compile_definitions(${AA_EXE_NAME}
         _cdecl=
         __cdecl=
         __fastcall=
+        __stdcall=
         SCREEN_WIDTH=320      # TRUE-HIGHRES: classic UI screen size,
         SCREEN_HEIGHT=200     # needed by HIGHRES/RESSCALE main.c integration
 )
 
 target_compile_definitions(${AA_EXE_NAME} PRIVATE WIN_IPX=1)
 
-if(APPLE)
+if(UNIX)
+    # CMake's UNIX is true on both Linux and APPLE (macOS/PPC-Tiger are
+    # Unix-based); this covers all of them with the one TARGET_UNIX path.
     target_compile_definitions(${AA_EXE_NAME} PRIVATE TARGET_UNIX=1)
     target_compile_definitions(aa-character-dump PRIVATE TARGET_UNIX=1)
+endif()
 
+if(UNIX AND NOT APPLE)
+    # Linux (unlike macOS, which relies on a real Homebrew-provided
+    # SDLmain to satisfy SDL_main.h's __MACOSX__-triggered `main` ->
+    # `SDL_main` rename) has no SDLmain shim at all -- see main.c's own
+    # AA_GENERIC_UNIX_MAIN block/comment, the same mechanism already
+    # proven by the IRIX-O2 Makefile build for the same reason.
+    target_compile_definitions(${AA_EXE_NAME} PRIVATE AA_GENERIC_UNIX_MAIN=1)
+
+    # Let the release archive be self-contained: a lib/ folder copied in
+    # alongside the binary (see .github/workflows/linux-release-build.yml)
+    # is found via $ORIGIN-relative rpath, the same way IRIX-O2/PPC-Tiger
+    # releases already bundle their own SDL libs instead of requiring the
+    # end user to install sdl12-compat/SDL2_net themselves. --disable-new-dtags
+    # forces the old-style DT_RPATH (transitive across the whole load
+    # chain) instead of GCC's default DT_RUNPATH, which only resolves the
+    # executable's own *direct* NEEDED entries -- SDL2_net's own transitive
+    # need for libSDL2 would otherwise fail to find our bundled copy.
+    target_link_options(${AA_EXE_NAME} PRIVATE -Wl,--disable-new-dtags)
+    set_target_properties(${AA_EXE_NAME} PROPERTIES
+        BUILD_RPATH "$ORIGIN/lib"
+        INSTALL_RPATH "$ORIGIN/lib"
+    )
+endif()
+
+if(APPLE)
     # sdl12-compat loads SDL2 dynamically; add Homebrew and pkg-config library
     # directories to the runtime search path so startup does not depend on shell env.
     set(AA_RPATH_DIRS
