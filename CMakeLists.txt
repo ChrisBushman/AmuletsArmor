@@ -163,8 +163,9 @@ set(AA_RUNTIME_DIR "${CMAKE_BINARY_DIR}/runtime")
 
 add_custom_command(TARGET ${AA_EXE_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "${AA_RUNTIME_DIR}"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_CURRENT_SOURCE_DIR}/Exe"
-        "${AA_RUNTIME_DIR}"
-    COMMENT "Copying runtime assets to ${AA_RUNTIME_DIR}"
+    COMMAND ${CMAKE_COMMAND}
+        "-DAA_EXE_SRC_DIR=${CMAKE_CURRENT_SOURCE_DIR}/Exe"
+        "-DAA_EXE_DST_DIR=${AA_RUNTIME_DIR}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/Build/CopyRuntimeAssets.cmake"
+    COMMENT "Copying runtime assets to ${AA_RUNTIME_DIR} (excluding Windows/DOS-only files)"
 )

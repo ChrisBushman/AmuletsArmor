@@ -41,7 +41,7 @@ jobs:
         run: |
           STAGE=AmuletsArmor-Linux
           mkdir -p "$STAGE/lib"
-          cp -r Exe/. "$STAGE/"
+          cmake -DAA_EXE_SRC_DIR=Exe -DAA_EXE_DST_DIR="$STAGE" -P Build/CopyRuntimeAssets.cmake
           cp out/linux/amulets-armor "$STAGE/"
           chmod +x "$STAGE/amulets-armor"
           for lib in $(ldd out/linux/amulets-armor | awk '/libSDL/ {print $3}'); do
