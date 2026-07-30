@@ -14,8 +14,6 @@
  *<!-----------------------------------------------------------------------*/
 #include "PICS.H"
 #include "ENDIAN_AA.H"
-
-#ifdef TARGET_UNIX
 #include <string.h>
 
 static T_byte8 G_lastMissingPictureName[14] = "" ;
@@ -48,16 +46,22 @@ static T_void IPictureReportMissing(T_byte8 *name)
         G_lastMissingPictureName[13] = '\0' ;
     }
 }
-#endif
 
 static T_resourceFile G_pictureResFile ;
 static E_Boolean G_picturesActive = FALSE ;
 
-#ifdef TARGET_UNIX
 /*
  * Keep exact lookup semantics first, then try basename-only as a
- * temporary unix compatibility path for resource names embedded with
- * directory components in FRM files.
+ * compatibility path for resource names embedded with directory
+ * components in FRM files (e.g. "COLORIZE/COLORT01") that PICS.RES
+ * itself stores as flat, undirectoried entries ("COLORT01"). Was
+ * TARGET_UNIX-only; native Windows hit the exact same mismatch (real
+ * Windows 95 hardware: DebugCheck(PictureExist("COLORIZE/COLORT01"))
+ * failing and DebugFail() exit(3)-ing the client) -- the only reason it
+ * went unnoticed on the mainline Windows release is that DebugCheck
+ * compiles to a no-op under NDEBUG there, silently leaving colorize
+ * tables unset rather than asserting. Not platform-specific, so no
+ * longer gated behind an ifdef.
  */
 static T_resource IPictureFindCompat(T_byte8 *name)
 {
@@ -82,7 +86,6 @@ static T_resource IPictureFindCompat(T_byte8 *name)
 
     return found ;
 }
-#endif
 
 /*-------------------------------------------------------------------------*
  * Routine:  PicturesInitialize
@@ -187,19 +190,11 @@ T_byte8 *PictureLock(T_byte8 *name, T_resource *res)
 
     /* Look up the picture in the index. */
 //printf("> %s\n", name) ;
-#ifdef TARGET_UNIX
     found = IPictureFindCompat(name) ;
-#else
-    found = ResourceFind(G_pictureResFile, name) ;
-#endif
 //printf("Locking pic %s (%p) for %s\n", name, found, DebugGetCallerName()) ;
     if (found == RESOURCE_BAD)  {
 #ifndef NDEBUG
-    #ifdef TARGET_UNIX
         IPictureReportMissing(name) ;
-    #else
-        printf("Cannot find picture named '%s'\n", name) ;
-    #endif
 #endif
         found = ResourceFind(G_pictureResFile, "DRK42") ;
     }
@@ -250,18 +245,10 @@ T_byte8 *PictureLockData(T_byte8 *name, T_resource *res)
     DebugCheck(G_picturesActive == TRUE) ;
 
     /* Look up the picture in the index. */
-#ifdef TARGET_UNIX
     found = IPictureFindCompat(name) ;
-#else
-    found = ResourceFind(G_pictureResFile, name) ;
-#endif
 #ifndef NDEBUG
     if (found == RESOURCE_BAD)  {
-#ifdef TARGET_UNIX
         IPictureReportMissing(name) ;
-#else
-        printf("Cannot find picture named '%s'\n", name) ;
-#endif
         found = ResourceFind(G_pictureResFile, "DRK42") ;
     }
 #endif
@@ -313,18 +300,10 @@ T_bitmap *PictureLockDataAsBitmap(T_byte8 *name, T_resource *res)
        PictureLockData and checking freshness after) because
        ResourceIsFreshLoad() must be read before ResourceLock() mutates
        the resource's state as a side effect of loading it. */
-#ifdef TARGET_UNIX
     found = IPictureFindCompat(name) ;
-#else
-    found = ResourceFind(G_pictureResFile, name) ;
-#endif
 #ifndef NDEBUG
     if (found == RESOURCE_BAD)  {
-#ifdef TARGET_UNIX
         IPictureReportMissing(name) ;
-#else
-        printf("Cannot find picture named '%s'\n", name) ;
-#endif
         found = ResourceFind(G_pictureResFile, "DRK42") ;
     }
 #endif
@@ -388,11 +367,7 @@ E_Boolean PictureExist(T_byte8 *name)
     DebugCheck(G_picturesActive == TRUE) ;
 
     /* Look up the picture in the index. */
-#ifdef TARGET_UNIX
     res = IPictureFindCompat(name) ;
-#else
-    res = ResourceFind(G_pictureResFile, name) ;
-#endif
 
     /* Check to see if it is a good resource. */
     picExist = (res == RESOURCE_BAD)?FALSE:TRUE ;
@@ -468,11 +443,7 @@ T_resource PictureFind(T_byte8 *name)
     DebugCheck(name != NULL) ;
 
     /* Look up the picture in the index. */
-#ifdef TARGET_UNIX
     res = IPictureFindCompat(name) ;
-#else
-    res = ResourceFind(G_pictureResFile, name) ;
-#endif
 
     DebugEnd() ;
 

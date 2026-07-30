@@ -13,7 +13,7 @@
 #ifdef TARGET_UNIX
 #include <sys/time.h>
 #else
-#include "SDL.H"
+#include "SDL.h"
 #endif
 
 #define PERFPROF_MAX_SLOTS      64

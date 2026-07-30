@@ -25,9 +25,7 @@
 #include "VIEWFILE.H"
 #include "ENDIAN_AA.H"
 
-#ifdef TARGET_UNIX
 #include <stddef.h>
-#endif
 
 /* Internal defination:  Handle means that there is a copied resource, */
 /* but not an actual one. */
@@ -181,7 +179,11 @@ typedef struct {
     T_void *p_pic ;
 } T_objectPic ;
 
-#ifdef TARGET_UNIX
+/* Not just TARGET_UNIX: see the comment on IObjTypeExpandForUnix below --
+   the same GCC-vs-disk-format struct mismatch RESOURCE.C's
+   T_resourceEntryDisk32 fix addresses also applies here, and native
+   Windows built with GCC/mingw needs it just as much as Linux/macOS. */
+#if defined(TARGET_UNIX) || defined(__GNUC__)
 typedef struct {
     T_sword16 number                          PACK ;
     T_word32 resource32                       PACK ;
@@ -227,7 +229,7 @@ typedef struct {
     T_objectStance stances[1]         PACK ;
 } PACK_STRUCT T_objectType ;
 
-#ifdef TARGET_UNIX
+#if defined(TARGET_UNIX) || defined(__GNUC__)
 static E_Boolean IObjTypeRangeOk(T_word32 offset, T_word32 sizeNeeded, T_word32 totalSize)
 {
     if (offset > totalSize)
@@ -328,6 +330,22 @@ static T_objectType *IObjTypeExpandForUnix(T_objectType *p_typeDisk, T_word32 si
         extraBytes = 4096 ;
 
     newSize = sizeObjType + extraBytes ;
+
+    /* TEMPORARY DIAGNOSTIC: same rationale as RESOURCE.C's ResourceLock
+       logging -- record every expansion's sizing decision so a heap
+       corruption caught much later can be traced back to whichever call
+       actually produced a bad size/allocation. */
+    {
+        FILE *diagFp = fopen("resdiag.log", "a") ;
+        if (diagFp != NULL)  {
+            fprintf(diagFp,
+                "objtype-expand: sizeObjType=%lu totalPics=%lu extraBytes=%lu newSize=%lu\n",
+                (unsigned long)sizeObjType, (unsigned long)totalPics,
+                (unsigned long)extraBytes, (unsigned long)newSize) ;
+            fclose(diagFp) ;
+        }
+    }
+
     p_copy = (T_objectType *)MemAlloc(newSize) ;
     if (p_copy == NULL)
         return NULL ;
@@ -530,7 +548,7 @@ T_objTypeInstance ObjTypeCreate(T_word16 objTypeNum, T_3dObject *p_obj)
     T_byte8 resName[80] ;
     T_objectType *p_type ;
     T_objectFrame *p_frame ;
-#ifdef TARGET_UNIX
+#if defined(TARGET_UNIX) || defined(__GNUC__)
     T_word32 sizeObjType ;
     T_objectType *p_typeCopy ;
 #endif
@@ -559,7 +577,7 @@ T_objTypeInstance ObjTypeCreate(T_word16 objTypeNum, T_3dObject *p_obj)
         DebugCheck(p_objType->resource != RESOURCE_BAD) ;
         objTypeSizeForLock = ResourceGetSize(p_objType->resource) ;
 
-    #ifdef TARGET_UNIX
+    #if defined(TARGET_UNIX) || defined(__GNUC__)
         sizeObjType = objTypeSizeForLock ;
         p_typeCopy = IObjTypeExpandForUnix(p_type, sizeObjType, &objTypeSizeForLock) ;
         if (p_typeCopy == NULL)  {
@@ -1268,14 +1286,14 @@ static T_void IObjTypeLock(T_objectType *p_type, T_word16 typeNumber, T_word32 t
 //    T_word16 picLookup ;
     T_word16 frameLookup ;
     E_Boolean flip ;
-#ifdef TARGET_UNIX
+#if defined(TARGET_UNIX) || defined(__GNUC__)
     T_word32 stanceBaseOffset ;
     T_word32 stanceOffset ;
 #endif
 
     DebugRoutine("IObjTypeLock") ;
 
-#ifdef TARGET_UNIX
+#if defined(TARGET_UNIX) || defined(__GNUC__)
     if (IObjTypeRangeOk(0, (T_word32)(offsetof(T_objectType, stances)), typeSize) == FALSE)
         return ;
     stanceBaseOffset = (T_word32)(offsetof(T_objectType, stances)) ;
@@ -1303,7 +1321,7 @@ fflush(stdout) ;
     for (stanceNum = 0, p_stance = p_type->stances;
          stanceNum < p_type->numStances;
          stanceNum++, p_stance++)  {
-#ifdef TARGET_UNIX
+#if defined(TARGET_UNIX) || defined(__GNUC__)
         stanceOffset = stanceBaseOffset + ((T_word32)stanceNum * sizeof(T_objectStance)) ;
         if (IObjTypeRangeOk(stanceOffset, sizeof(T_objectStance), typeSize) == FALSE)
             break ;
@@ -1318,7 +1336,7 @@ printf(" offset = %d\n", p_stance->offsetFrameList) ;
 fflush(stdout) ;
 */
         /* Find the appropriate frame list for this stance. */
-    #ifdef TARGET_UNIX
+    #if defined(TARGET_UNIX) || defined(__GNUC__)
         if (IObjTypeRangeOk(
             p_stance->offsetFrameList,
             ((T_word32)p_stance->numFrames) * sizeof(T_objectFrame),
@@ -1352,7 +1370,7 @@ fflush(stdout) ;
              p_picListLookup = (T_objectPic *)
                              (&(((T_byte8 *)p_type)[ObjFrameGetOffsetPicList(p_frameLookup)])) ;
 
-#ifdef TARGET_UNIX
+#if defined(TARGET_UNIX) || defined(__GNUC__)
              if (IObjTypeRangeOk(
                      ObjFrameGetOffsetPicList(p_frame),
                      ((T_word32)p_frame->numAngles) * sizeof(T_objectPic),

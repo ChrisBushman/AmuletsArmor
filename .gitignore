@@ -13,6 +13,21 @@ Build/Windows/VC2013/**/*.user
 /Build/build_tests/
 /Build/MacOSX-PPC/build/
 /Build/IRIX-O2/build/
+/Build/Win9x/build/
+
+# Vendored SDL 1.2.15 source (Lib/SDL-1.2.15-src/): autotools artifacts
+# from Build/Win9x/Makefile running ./configure && make locally -- always
+# regenerated fresh from the committed .in templates, never committed
+# themselves.
+/Lib/SDL-1.2.15-src/build/
+/Lib/SDL-1.2.15-src/Makefile
+/Lib/SDL-1.2.15-src/config.log
+/Lib/SDL-1.2.15-src/config.status
+/Lib/SDL-1.2.15-src/libtool
+/Lib/SDL-1.2.15-src/sdl-config
+/Lib/SDL-1.2.15-src/sdl.pc
+/Lib/SDL-1.2.15-src/SDL.qpg
+/Lib/SDL-1.2.15-src/SDL.spec
 
 # Native binaries built locally for release packaging -- these ship as
 # GitHub Release assets, not committed into the tree.

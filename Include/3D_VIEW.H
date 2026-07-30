@@ -15,11 +15,48 @@
 #define VIEW3D_HALF_WIDTH (VIEW3D_WIDTH/2)
 #define VIEW3D_HALF_HEIGHT (VIEW3D_HEIGHT/2)
 */
-#ifndef VIEW3D_SCALE
-#define VIEW3D_SCALE 2   /* 1 = classic 320x200, 2 = 640x400 hybrid */
+/* Upper bound for the runtime-selectable "Level of Detail" below. Fixed
+   render buffers (this file's own MAX_VIEW3D_WIDTH/HEIGHT, plus
+   MAX_WALL_RUNS/MAX_FLOOR_INFO/MAX_OBJECT_COLUMN_RUNS in 3D_VIEW.C) are
+   always sized for this MAX, regardless of what's actually selected at
+   runtime -- same pattern already used for VIEW3D_WIDTH being a runtime
+   value smaller than its own MAX_VIEW3D_WIDTH buffer bound.
+
+   MUST equal HIGHRES_MAX_SCALE (HIGHRES.H): HighResInit() always
+   allocates its frame at HIGHRES_MAX_SCALE's fixed stride now (see that
+   file's own comment), and View3dInitialize() below walks that same
+   buffer using MAX_VIEW3D_WIDTH/HEIGHT -- if the two ceilings ever
+   disagree, the buffer's real stride and the stride the 3D renderer
+   assumes diverge again, exactly the bug this pairing was introduced to
+   fix (confirmed on real Windows 95 hardware: a silent crash, access
+   violation not a DebugCheck, no error.log, on the very first 3D frame
+   after a level/quest load -- and confirmed to reproduce even at the
+   *lowest* detail setting, ruling out a buffer-too-big explanation and
+   pointing squarely at a stride mismatch instead). Was temporarily
+   lowered to 3 chasing a stack/.bss-growth theory before the real stride
+   bug was found; restored to match HIGHRES_MAX_SCALE now that the actual
+   cause is fixed at the allocation site instead. */
+#ifndef VIEW3D_SCALE_MAX
+#define VIEW3D_SCALE_MAX 6
 #endif
-#define MAX_VIEW3D_WIDTH  (320*VIEW3D_SCALE)
-#define MAX_VIEW3D_HEIGHT (200*VIEW3D_SCALE)
+#define MAX_VIEW3D_WIDTH  (320*VIEW3D_SCALE_MAX)
+#define MAX_VIEW3D_HEIGHT (200*VIEW3D_SCALE_MAX)
+
+/* Runtime "Level of Detail" (1..VIEW3D_SCALE_MAX): how many times larger
+   than classic 320x200 the 3D view is actually rendered/composited at.
+   Was a hardcoded compile-time constant (2); every existing VIEW3D_SCALE
+   reference across the codebase (coordinate-space conversion between
+   logical 320-space and scaled pixel space, in 3D_VIEW.C, VIEW.C,
+   CONTROL.C, CLIENT.C, BANNER.C, INVENTOR.C) now reads this variable
+   instead, via the macro just below -- no call site needed to change. */
+extern T_word16 G_view3dActiveScale ;
+#define VIEW3D_SCALE G_view3dActiveScale
+
+/* Sets the active detail level, clamped to 1..VIEW3D_SCALE_MAX. Must be
+   called before ViewInitialize() (which is what actually consumes it,
+   via View3dSetSize) -- changing it afterward has no effect until the
+   view is torn down and reinitialized. */
+T_void View3dSetActiveScale(T_word16 scale) ;
 
 #define VIEW3D_PASSABLE_BIT 0x1000
 

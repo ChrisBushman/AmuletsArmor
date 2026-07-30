@@ -88,7 +88,24 @@ static T_resourceFile IFindOpenResource(T_byte8 *p_filename) ;
 
 static T_void IDiscardEntries(T_resourceEntry *p_entry, T_word16 number) ;
 
-#ifdef TARGET_UNIX
+/* Not just TARGET_UNIX: the safe path below is needed by ANY compiler
+   that isn't the original MSVC/Watcom toolchain the .RES files were
+   built with. Measured directly against a real PICS.RES: the on-disk
+   index format is 39 bytes/entry (T_resourceEntryDisk32, packed), but
+   T_resourceEntry -- the struct the "#else" raw-FileRead branch below
+   reads straight into -- is 44 bytes under GCC's natural (unpacked)
+   alignment on i686 (extra padding plus the p_data/ownerDir pointer
+   fields, which don't exist on disk at all). Reading a 39-byte-strided
+   file directly into a 44-byte-strided array corrupts every entry past
+   the first one a binary search actually lands on -- confirmed on real
+   Windows 95 hardware (a mingw/GCC-built native Windows target, not
+   TARGET_UNIX): PictureExist("COLORIZE/COLORT01") failing and
+   DebugFail()'s exit(3) silently killing the client on startup, even
+   though "COLORIZE" is a perfectly valid top-level directory entry.
+   Never caught before because Release Windows builds define NDEBUG,
+   which compiles DebugCheck out entirely -- the corrupted lookups just
+   silently returned wrong/missing pictures instead of asserting. */
+#if defined(TARGET_UNIX) || defined(__GNUC__)
 typedef struct {
     T_byte8 resID[4]            PACK;
     T_byte8 p_resourceName[14]  PACK;
@@ -144,7 +161,7 @@ static T_word16 ILoadResourceIndexUnix(
         memset(p_index, 0, sizeof(T_resourceEntry) * entriesToCopy) ;
 
         for (i=0; i<entriesToCopy; i++) {
-            /* T_resourceEntryDisk32 is 41 bytes (per-field PACK, no
+            /* T_resourceEntryDisk32 is 39 bytes (per-field PACK, no
                padding) -- not a multiple of 4, so for i>=1 a plain
                p_diskIndex[i].fileOffset/.size/.lockCount member
                dereference lands on a non-4-byte-aligned address (PACK
@@ -285,7 +302,7 @@ T_resourceFile ResourceOpen(T_byte8 *filename)
         /* Check for the correct id */
         DebugCheck(resourceHeader.uniqueID == RESOURCE_FILE_UNIQUE_ID) ;
 
-    #ifdef TARGET_UNIX
+    #if defined(TARGET_UNIX) || defined(__GNUC__)
         resourceHeader.numEntries = ILoadResourceIndexUnix(
                         file,
                         resourceHeader.indexOffset,
@@ -595,6 +612,28 @@ T_void *ResourceLock(T_resource resource)
 //printf("  readding off the resource file\n") ;
             /* Resource is not loaded.  We will need to load it */
             /* into memory. */
+
+            /* TEMPORARY DIAGNOSTIC: rolling log of every disk-backed
+               resource load (rare relative to total ResourceLock calls --
+               most hit the already-in-memory case above) plus a loud flag
+               on anything with an implausible size, so a heap-corruption
+               crash caught much later (at some unrelated MemFree call,
+               via _MEM_CHECK_FULL_) can be traced back to exactly which
+               load actually caused it instead of just where it was
+               finally detected. */
+            {
+                FILE *diagFp = fopen("resdiag.log", "a") ;
+                if (diagFp != NULL)  {
+                    fprintf(diagFp,
+                        "%sload: name='%s' size=%ld fileOffset=%ld resourceFile=%d\n",
+                        (p_resource->size > 20000000L) ? "SUSPICIOUS " : "",
+                        p_resource->p_resourceName,
+                        (long)p_resource->size,
+                        (long)p_resource->fileOffset,
+                        (int)p_resource->resourceFile) ;
+                    fclose(diagFp) ;
+                }
+            }
 
             /* Start by allocating a spot for this resource. */
             p_resource->p_data = MemAlloc(p_resource->size+sizeof(T_resourceEntry *)) ;
@@ -962,7 +1001,7 @@ static T_resourceDirInfo *IDirLock(T_resource dir)
                     p_dir->nextResource = -1 ;
 
                     /* Allocate and read this directory index. */
-#ifdef TARGET_UNIX
+#if defined(TARGET_UNIX) || defined(__GNUC__)
                     p_dir->numberEntries = ILoadResourceIndexUnix(
                                                file,
                                                header.indexOffset,

@@ -1,0 +1,42 @@
+name: Windows 9x release build
+
+# One-off/manual cross-compile build, not a permanent CI gate -- there is
+# no Windows 95/98/ME GitHub Actions runner, so this only proves the
+# build stays green. Real verification happens on real hardware (see
+# Build/Win9x/Makefile's own header comment for the toolchain rationale
+# and Lib/SDL_net-1.2.8-src/README-win9x.md for why SDL_net is rebuilt
+# from source). Triggered by hand from the Actions tab or
+# `gh workflow run win9x-release-build.yml`.
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install mingw-w64 cross toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mingw-w64-i686 g++-mingw-w64-i686 mingw-w64-tools make cmake zip
+
+      - name: Rebuild mingw-w64-crt at -march=i486 (real-hardware fix)
+        run: Build/Win9x/rebuild-mingw-crt-i486.sh
+
+      - name: Build AA.exe + SDL_net.dll (Win9x)
+        run: make -C Build/Win9x package
+
+      - name: Package release archive
+        run: |
+          STAGE=AmuletsArmor-Win9x
+          mkdir -p "$STAGE"
+          cmake -DAA_EXE_SRC_DIR=Exe -DAA_EXE_DST_DIR="$STAGE" -P Build/CopyRuntimeAssets.cmake
+          cp Build/Win9x/build/package/* "$STAGE/"
+          zip -rq AmuletsArmor-Win9x.zip "$STAGE"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AmuletsArmor-Win9x
+          path: AmuletsArmor-Win9x.zip
+          if-no-files-found: error

@@ -13,16 +13,38 @@
 #include <string.h>
 #include "HIGHRES.H"
 
+/* MAX_STRIDE/MAX_ROWS: the buffer is ALWAYS allocated (and its row-to-row
+   pointer math always computed) at HIGHRES_MAX_SCALE, regardless of what
+   scale is actually requested -- callers outside this file (3D_VIEW.C's
+   View3dInitialize, in particular) walk this buffer using MAX_VIEW3D_WIDTH/
+   HEIGHT (3D_VIEW.H), which are themselves always sized for
+   VIEW3D_SCALE_MAX, since the 3D renderer's hundreds of `p_pixel +=
+   MAX_VIEW3D_WIDTH` pointer-arithmetic sites are compiled once and can't
+   vary their stride per frame. Allocating (and internally strproviding)
+   only `scale`-sized rows here -- as this used to do -- left every row
+   after the first walked at MAX_VIEW3D_WIDTH bytes apart while the real
+   buffer's rows were only HIGHRES_BASE_WIDTH*scale bytes apart whenever
+   scale < HIGHRES_MAX_SCALE: a heap buffer overrun starting on the very
+   first frame after a level/quest load, confirmed on real Windows 95
+   hardware as a silent crash (access violation, not a DebugCheck -- no
+   error.log) with no visible 3D view at all. G_frameW/G_frameH (and
+   HighResFrameWidth/Height) still report the *active* scale-sized
+   region within that fixed-stride buffer -- callers that need to know
+   how much of each row is actually meaningful (main.c's per-frame
+   compose-and-copy loop) still want that, just not as the stride. */
 static unsigned char *G_frame = 0;      /* the scaled output frame        */
 static int G_scale = 0;                 /* 0 = not initialized            */
-static int G_frameW = 0;
-static int G_frameH = 0;
+static int G_frameW = 0;                /* active width  (<= MAX_STRIDE)  */
+static int G_frameH = 0;                /* active height (<= MAX_ROWS)    */
 
 static int G_winEnabled = 0;            /* logical 320x200 view rect      */
 static int G_winX = 0;
 static int G_winY = 0;
 static int G_winW = 0;
 static int G_winH = 0;
+
+#define HIGHRES_MAX_STRIDE (HIGHRES_BASE_WIDTH  * HIGHRES_MAX_SCALE)
+#define HIGHRES_MAX_ROWS   (HIGHRES_BASE_HEIGHT * HIGHRES_MAX_SCALE)
 
 /*--------------------------------------------------------------------------*/
 int HighResInit(int scale)
@@ -32,15 +54,13 @@ int HighResInit(int scale)
 
     HighResFinish();
 
+    G_frame = (unsigned char *)malloc((size_t)HIGHRES_MAX_STRIDE * (size_t)HIGHRES_MAX_ROWS);
+    if (!G_frame)
+        return 0;
+    memset(G_frame, 0, (size_t)HIGHRES_MAX_STRIDE * (size_t)HIGHRES_MAX_ROWS);
+
     G_frameW = HIGHRES_BASE_WIDTH * scale;
     G_frameH = HIGHRES_BASE_HEIGHT * scale;
-    G_frame = (unsigned char *)malloc((size_t)G_frameW * (size_t)G_frameH);
-    if (!G_frame)  {
-        G_frameW = 0;
-        G_frameH = 0;
-        return 0;
-    }
-    memset(G_frame, 0, (size_t)G_frameW * (size_t)G_frameH);
     G_scale = scale;
     return 1;
 }
@@ -62,7 +82,7 @@ int HighResGetScale(void)               {  return G_scale;  }
 unsigned char *HighResFrame(void)       {  return G_frame;  }
 int HighResFrameWidth(void)             {  return G_frameW;  }
 int HighResFrameHeight(void)            {  return G_frameH;  }
-int HighResFrameStride(void)            {  return G_frameW;  }
+int HighResFrameStride(void)            {  return HIGHRES_MAX_STRIDE;  }
 
 /*--------------------------------------------------------------------------*/
 void HighResSetViewWindow(int x, int y, int w, int h)
@@ -100,8 +120,13 @@ unsigned char *HighResViewPtr(void)
 {
     if ((!G_frame) || (!G_winEnabled))
         return 0;
+    /* HIGHRES_MAX_STRIDE, not G_frameW: this is the buffer's real
+       row-to-row distance (see HighResInit's own comment) -- the 3D
+       renderer writes through this pointer using MAX_VIEW3D_WIDTH as
+       its own stride assumption, which only matches HIGHRES_MAX_STRIDE,
+       not the active (possibly smaller) G_frameW. */
     return G_frame
-           + ((size_t)G_winY * (size_t)G_scale) * (size_t)G_frameW
+           + ((size_t)G_winY * (size_t)G_scale) * (size_t)HIGHRES_MAX_STRIDE
            + ((size_t)G_winX * (size_t)G_scale);
 }
 
@@ -168,8 +193,11 @@ static void IComposeRowSpan(
     if (count <= 0)
         return;
 
+    /* HIGHRES_MAX_STRIDE, not G_frameW -- see HighResViewPtr's own
+       comment; every row-to-row pointer step in this file must use the
+       buffer's real (fixed) stride, not the active/runtime width. */
     p_row = G_frame
-            + ((size_t)y * (size_t)G_scale) * (size_t)G_frameW
+            + ((size_t)y * (size_t)G_scale) * (size_t)HIGHRES_MAX_STRIDE
             + ((size_t)xStart * (size_t)G_scale);
 
     /* Build the first native row of this logical row... */
@@ -181,7 +209,7 @@ static void IComposeRowSpan(
     /* ...then duplicate it downward for the remaining native rows. */
     for (dup = 1; dup < G_scale; dup++)
         memcpy(
-            p_row + (size_t)dup * (size_t)G_frameW,
+            p_row + (size_t)dup * (size_t)HIGHRES_MAX_STRIDE,
             p_row,
             (size_t)count * (size_t)G_scale);
 }
@@ -279,8 +307,10 @@ void HighResExtractViewTo320(unsigned char *screen320)
         return;
 
     for (ly = G_winY; ly < (G_winY + G_winH); ly++)  {
+        /* HIGHRES_MAX_STRIDE, not G_frameW -- see HighResViewPtr's own
+           comment. */
         p_srcRow = G_frame
-                   + ((size_t)ly * (size_t)G_scale) * (size_t)G_frameW;
+                   + ((size_t)ly * (size_t)G_scale) * (size_t)HIGHRES_MAX_STRIDE;
         p_dest = screen320 + ((size_t)ly * HIGHRES_BASE_WIDTH);
         for (lx = G_winX; lx < (G_winX + G_winW); lx++)
             p_dest[lx] = p_srcRow[(size_t)lx * (size_t)G_scale];

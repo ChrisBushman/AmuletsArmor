@@ -2,8 +2,15 @@
 /*    FILE:  DOSDTALK.C                                                     */
 /****************************************************************************/
 #ifndef TARGET_UNIX
-#include "..\INCLUDE\DITALK.H"
-#include "..\DITALKP.H"
+/* Win9x port: backslash-separated relative includes only ever "worked"
+   by accident of MSVC's case-insensitive quoted-include fallback search
+   (joining this literal string onto each /I directory) -- GCC/mingw's
+   preprocessor treats backslash as a literal character, not a path
+   separator, so it never resolved there at all. Forward slashes and the
+   real (case-correct) relative path work identically on both compilers,
+   and don't rely on any include-search-order coincidence. */
+#include "../../Include/DITALK.H"
+#include "../DITALKP.H"
 #endif
 #include "MEMORY.H"
 

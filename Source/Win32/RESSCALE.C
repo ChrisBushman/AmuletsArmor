@@ -54,6 +54,11 @@
 #define RESSCALE_MAX_SCALE      8
 #define RESSCALE_HOTKEY_MAX     6      /* F11 cycles 1x .. 6x            */
 #define RESSCALE_MAX_WINDOW_DIM 16384
+/* Must match VIEW3D_SCALE_MAX (3D_VIEW.H) / HIGHRES_MAX_SCALE (HIGHRES.H)
+   -- not #included directly, to keep this module dependency-free (SDL 1.2
+   and the C library only, per the header comment), so the three ends of
+   this contract are individually kept in sync by comment instead. */
+#define RESSCALE_DETAIL_MAX     6
 
 /*--------------------------------------------------------------------------*/
 /* Configuration (from resolution.ini)                                      */
@@ -68,11 +73,32 @@ static int G_iniFit         = 0;   /* 0=fit(letterbox) 1=integer 2=stretch  */
    at the *desktop* resolution (width/height left at 0) trades that saving
    right back by scaling to more pixels. Explicit matching dimensions get
    both: a near-free SDL_Flip and the smaller scale's pixel count. */
-static int G_iniWidth       = 1280;/* explicit window width  (0 = use scale)*/
-static int G_iniHeight      = 800; /* explicit window height (0 = use scale)*/
+/* 1024x768 (not the wider/taller 1280x800 this used to default to): a
+   4:3 SVGA mode close to universally supported on real Win9x-era
+   hardware -- confirmed on real Windows 95 hardware that a fullscreen
+   request for a size the display driver doesn't support fails outright
+   (see the size fallback ladder in IOpenWindow, added at the same time
+   as this default change, for when even this isn't supported). */
+static int G_iniWidth       = 1024;/* explicit window width  (0 = use scale)*/
+static int G_iniHeight      = 768; /* explicit window height (0 = use scale)*/
 static int G_iniFullscreen  = 1;   /* 1 = fullscreen                        */
 static int G_iniAspect      = 0;   /* 1 = stretch 320x200 to 4:3 (x1.2 tall)*/
 static int G_iniHotkeys     = 1;   /* 1 = F11 cycles scale, Alt+Enter FS    */
+/* 0 = auto (try the desktop's own reported bpp first, then 32/16/8 --
+   see IOpenWindow). An explicit value skips that whole search and is
+   used as-is, both fullscreen and windowed -- for hardware/drivers where
+   auto-detection guesses wrong, or to force a specific depth (e.g. an
+   8bpp fullscreen mode some legacy Win9x cards only expose at their
+   native palette depth, or forcing 16 instead of 32 for speed on slower
+   real hardware). */
+static int G_iniBpp         = 0;   /* 0 = auto, else 8/16/24/32             */
+/* "Level of Detail": how many times larger than classic 320x200 the 3D
+   view itself is rendered at (consumed by View3dSetActiveScale, not by
+   this module directly -- see 3D_VIEW.H). Range 1..HIGHRES_MAX_SCALE,
+   matching VIEW3D_SCALE_MAX. Default of 2 matches the value the game
+   used before this was configurable. Independent of "scale" above,
+   which is the separate *window* size multiplier. */
+static int G_iniDetail       = 2;
 
 /*--------------------------------------------------------------------------*/
 /* State                                                                    */
@@ -184,14 +210,30 @@ static void IWriteDefaultIni(void)
         ";             0 = crisp square pixels.\n"
         "; hotkeys     1 = F11 cycles the window scale in game, Alt+Enter\n"
         ";             toggles fullscreen.  0 = disable both.\n"
+        "; bpp         Color depth: 8, 16, 24, or 32.  0 (default) = auto,\n"
+        ";             which tries the desktop's own reported depth first,\n"
+        ";             then 32/16/8 in order, and uses whichever one the\n"
+        ";             display driver actually grants.  Set this explicitly\n"
+        ";             if auto picks wrong (older/real hardware can behave\n"
+        ";             differently in exclusive fullscreen than windowed),\n"
+        ";             or to force a lower depth for speed.\n"
+        "; detail      \"Level of Detail\": how many times larger than\n"
+        ";             classic 320x200 the 3D view itself is actually\n"
+        ";             rendered at, 1-6.\n"
+        ";             Higher looks sharper but costs more CPU per frame;\n"
+        ";             lower is faster.  Applies in both windowed and\n"
+        ";             fullscreen.  Separate from scale/width/height above,\n"
+        ";             which only control the final window size.\n"
         "\n"
         "scale=2\n"
         "fit=fit\n"
-        "width=1280\n"
-        "height=800\n"
+        "width=1024\n"
+        "height=768\n"
         "fullscreen=1\n"
         "aspect=0\n"
-        "hotkeys=1\n",
+        "hotkeys=1\n"
+        "bpp=0\n"
+        "detail=2\n",
         fp);
     fclose(fp);
 }
@@ -251,6 +293,19 @@ static void IReadIni(void)
             G_iniAspect = (atoi(value) != 0);
         else if (ICompareKey(key, "hotkeys") == 0)
             G_iniHotkeys = (atoi(value) != 0);
+        else if (ICompareKey(key, "bpp") == 0)  {
+            int v = atoi(value);
+            /* Only real SDL/hardware pixel depths are accepted -- anything
+               else (including 0 written back out by hand) falls through to
+               auto-detect rather than handing SDL_SetVideoMode a bpp no
+               driver actually supports. */
+            if ((v == 8) || (v == 16) || (v == 24) || (v == 32))
+                G_iniBpp = v;
+            else
+                G_iniBpp = 0;
+        }
+        else if (ICompareKey(key, "detail") == 0)
+            G_iniDetail = IClampInt(atoi(value), 1, RESSCALE_DETAIL_MAX);
     }
     fclose(fp);
 }
@@ -418,43 +473,139 @@ static int IBuildMaps(int winW, int winH)
    for live resizing via the hotkeys. */
 static int IOpenWindow(void)
 {
-    int    winW;
-    int    winH;
+    int    reqW, reqH;
+    int    sizeListW[4], sizeListH[4];
+    int    numSizes;
+    int    s;
     Uint32 flags;
+    int    bppList[4];
+    int    numBpp;
+    int    i;
+    const SDL_VideoInfo *info;
 
-    IComputeWindowSize(&winW, &winH);
-    if (winW < 1)
-        winW = G_logicalW;
-    if (winH < 1)
-        winH = G_logicalH;
+    IComputeWindowSize(&reqW, &reqH);
+    if (reqW < 1)
+        reqW = G_logicalW;
+    if (reqH < 1)
+        reqH = G_logicalH;
 
-    /* Try for a real double-buffered hardware surface first: on a plain
-       SDL_SWSURFACE, SDL_Flip() has no page to swap and falls back to
-       SDL_UpdateRect() over the whole surface every call -- profiling on
-       PowerPC/Tiger found this costing as much as the CPU-side stretch
-       itself. HWSURFACE|DOUBLEBUF lets SDL_Flip do a real (cheap) buffer
-       swap when the backend actually supports it; SDL_SetVideoMode
-       silently grants whatever it can, so check G_real->flags afterward
-       and fall back to plain SWSURFACE (the always-safe, previously-only
-       option) if double buffering wasn't actually granted. */
-    flags = SDL_HWSURFACE | SDL_DOUBLEBUF;
-    if (G_iniFullscreen)
-        flags |= SDL_FULLSCREEN;
+    /* An explicit/computed size can simply not exist on real hardware --
+       confirmed on real Windows 95 hardware: a fullscreen request at
+       1280x800 (this module's own default) failed outright and fell all
+       the way back to ResScaleSetVideoMode's last-resort unscaled
+       640x400 path, losing scaling/letterboxing entirely. Try
+       progressively smaller common sizes before giving up, same
+       rationale as the bpp ladder just below -- a smaller scaled window
+       beats no scaling at all. Skipped for an explicit width=/height= in
+       resolution.ini when it's already <= the smallest rung (nothing
+       smaller to fall back to anyway). */
+    numSizes = 0;
+    sizeListW[numSizes] = reqW; sizeListH[numSizes] = reqH; numSizes++;
+    {
+        static const int fallbackW[3] = { 1024, 800, 640 };
+        static const int fallbackH[3] = { 768,  600, 480 };
+        int f;
+        for (f = 0; f < 3; f++)  {
+            if ((fallbackW[f] < reqW) || (fallbackH[f] < reqH))  {
+                sizeListW[numSizes] = fallbackW[f];
+                sizeListH[numSizes] = fallbackH[f];
+                numSizes++;
+            }
+        }
+    }
 
-    G_real = SDL_SetVideoMode(winW, winH, 32, flags);
-    if ((G_real == NULL) || (!(G_real->flags & SDL_DOUBLEBUF)))  {
-        flags = SDL_SWSURFACE;
+    /* NOTE on the two nested loops below: SDL 1.2 does not guarantee the
+       *previous* video surface stays valid once SDL_SetVideoMode is
+       called again (a failed call is not guaranteed to leave the prior
+       surface intact) -- so as soon as ANY attempt below succeeds
+       (G_real != NULL), both loops stop immediately rather than trying
+       for something "better" (e.g. real fullscreen instead of a
+       downgraded windowed grant) at the risk of trading away a surface
+       already in hand for nothing. Candidates are already ordered
+       best-first (largest/most-preferred size, then desktop-native bpp),
+       so the first success is normally also the best available. */
+    G_real = NULL;
+    for (s = 0; s < numSizes; s++)  {
+    int winW = sizeListW[s];
+    int winH = sizeListH[s];
+
+    /* Legacy Win9x-era display drivers frequently only support one
+       specific bpp (often 8 or 16) for an *exclusive* fullscreen mode,
+       even though the same card handles any bpp fine in a windowed
+       (desktop-composited) surface -- SDL_SetVideoMode silently grants
+       whatever it can, so a hardcoded 32bpp fullscreen request can fail
+       outright and fall all the way back to windowed with no error,
+       exactly the failure mode seen on real Windows 95 hardware
+       (resolution.ini's fullscreen=1 honoured on windowed but not
+       fullscreen). An explicit bpp= in resolution.ini skips all of this
+       and is tried alone -- for hardware/drivers where auto-detection
+       still guesses wrong, or to just force a specific depth. Otherwise,
+       try the desktop's own current bpp first (the one value guaranteed
+       supported by the installed driver), then fall back through the
+       other common legacy depths. The multi-bpp search only matters for
+       fullscreen -- windowed mode goes through SDL's own desktop-format
+       conversion regardless of what's requested. */
+    numBpp = 0;
+    if (G_iniBpp != 0)  {
+        bppList[numBpp++] = G_iniBpp;
+    } else {
+        if (G_iniFullscreen)  {
+            info = SDL_GetVideoInfo();
+            if ((info != NULL) && (info->vfmt != NULL) &&
+                (info->vfmt->BitsPerPixel > 0))
+                bppList[numBpp++] = info->vfmt->BitsPerPixel;
+        }
+        bppList[numBpp++] = 32;
+        if (G_iniFullscreen)  {
+            bppList[numBpp++] = 16;
+            bppList[numBpp++] = 8;
+        }
+    }
+
+    for (i = 0; i < numBpp; i++)  {
+        /* Skip an exact duplicate of the bpp already tried (desktop bpp
+           landing on 32/16/8). */
+        if ((i > 0) && (bppList[i] == bppList[i-1]))
+            continue ;
+
+        /* Try for a real double-buffered hardware surface first: on a
+           plain SDL_SWSURFACE, SDL_Flip() has no page to swap and falls
+           back to SDL_UpdateRect() over the whole surface every call --
+           profiling on PowerPC/Tiger found this costing as much as the
+           CPU-side stretch itself. HWSURFACE|DOUBLEBUF lets SDL_Flip do
+           a real (cheap) buffer swap when the backend actually supports
+           it; check G_real->flags afterward and fall back to plain
+           SWSURFACE (the always-safe option) at the same bpp if double
+           buffering wasn't actually granted. */
+        flags = SDL_HWSURFACE | SDL_DOUBLEBUF;
         if (G_iniFullscreen)
             flags |= SDL_FULLSCREEN;
-        G_real = SDL_SetVideoMode(winW, winH, 32, flags);
-        if (G_real == NULL)
-            return 0;
+
+        G_real = SDL_SetVideoMode(winW, winH, bppList[i], flags);
+        if ((G_real == NULL) || (!(G_real->flags & SDL_DOUBLEBUF)))  {
+            flags = SDL_SWSURFACE;
+            if (G_iniFullscreen)
+                flags |= SDL_FULLSCREEN;
+            G_real = SDL_SetVideoMode(winW, winH, bppList[i], flags);
+        }
+
+        if (G_real != NULL)
+            break ;
     }
-    fprintf(stderr, "RESSCALE: video surface flags 0x%08X (%s%s%s)\n",
+
+    if (G_real != NULL)
+        break ;
+    }
+
+    if (G_real == NULL)
+        return 0;
+
+    fprintf(stderr, "RESSCALE: video surface flags 0x%08X (%s%s%s), bpp=%d, %dx%d\n",
             (unsigned)G_real->flags,
             (G_real->flags & SDL_HWSURFACE) ? "HW " : "SW ",
             (G_real->flags & SDL_DOUBLEBUF) ? "DOUBLEBUF " : "",
-            (G_real->flags & SDL_FULLSCREEN) ? "FULLSCREEN" : "windowed");
+            (G_real->flags & SDL_FULLSCREEN) ? "FULLSCREEN" : "windowed",
+            G_real->format->BitsPerPixel, G_real->w, G_real->h);
 
     return IBuildMaps(G_real->w, G_real->h);
 }
@@ -535,6 +686,16 @@ fallback:
     G_xRunStart  = NULL;
     G_xRunLen    = NULL;
     G_numXRuns   = 0;
+    /* IOpenWindow already tried every plausible bpp for fullscreen and
+       still didn't get a usable surface at all -- but still honour
+       resolution.ini's fullscreen=1 here rather than silently going
+       windowed: the caller's own `flags` (the game's original
+       SDL_SetVideoMode request) never includes SDL_FULLSCREEN itself,
+       so without this a total IOpenWindow failure downgraded a
+       fullscreen-configured game straight to windowed with no
+       diagnostic at all. */
+    if (G_iniFullscreen)
+        flags |= SDL_FULLSCREEN;
     G_real   = SDL_SetVideoMode(width, height, bpp, flags);
     G_shadow = G_real;
     return G_real;
@@ -892,6 +1053,12 @@ int ResScaleGetWindowWidth(void)
 int ResScaleGetWindowHeight(void)
 {
     return (G_real != NULL) ? G_real->h : 0;
+}
+
+int ResScaleGetDetail(void)
+{
+    ResScaleInit();
+    return G_iniDetail;
 }
 
 #ifdef RESSCALE_TESTING

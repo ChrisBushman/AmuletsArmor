@@ -87,6 +87,12 @@ int           ResScaleGetLogicalHeight(void);
 int           ResScaleGetWindowWidth(void);
 int           ResScaleGetWindowHeight(void);
 
+/* "Level of Detail" from resolution.ini (1..6, default 2) -- how many
+   times larger than classic 320x200 the 3D view is actually rendered at.
+   Not applied automatically: the caller must feed this into
+   View3dSetActiveScale() (3D_VIEW.H) before ViewInitialize() runs. */
+int           ResScaleGetDetail(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -33,8 +33,11 @@
 #endif
 #include "resource.h"
 
-#ifdef TARGET_UNIX
-/* TRUE-HIGHRES: native high-res 3D view compositing */
+/* TRUE-HIGHRES: native high-res 3D view compositing. Not just TARGET_UNIX:
+   the real (mingw/GCC-built) Windows 9x target uses this same pipeline
+   too -- only the original MSVC-built Windows client keeps the older,
+   fixed-640x400 path further down in this file. */
+#if defined(TARGET_UNIX) || defined(__GNUC__)
 #include "HIGHRES.H"
 #include "3D_VIEW.H"
 #include "RESSCALE.H"
@@ -42,13 +45,21 @@
 
 #define CAP_SPEED_TO_FPS       0 // 70 // 0
 
+/* Shorthand for "uses the RESSCALE/HighRes pipeline" (TARGET_UNIX, or the
+   real mingw/GCC-built Windows 9x target) vs. the old fixed-640x400 path
+   (the original MSVC-built Windows client only). See the include block
+   above for why this is broader than just TARGET_UNIX. */
+#if defined(TARGET_UNIX) || defined(__GNUC__)
+#define AA_USE_RESSCALE_PIPELINE 1
+#endif
+
 static int G_done = FALSE;
 static SDL_Surface* screen;
 static SDL_Surface* surface;
-#ifndef TARGET_UNIX
+#ifndef AA_USE_RESSCALE_PIPELINE
 static SDL_Surface* largesurface;
 #endif
-#ifdef TARGET_UNIX
+#ifdef AA_USE_RESSCALE_PIPELINE
 /* TRUE-HIGHRES: the window itself is managed by RESSCALE (resolution.ini:
    any window size incl. 1024x768 / 1920x1080, fullscreen, letterboxing,
    F11 + Alt+Enter hotkeys).  "screen" is the fixed-size logical frame
@@ -101,7 +112,7 @@ void WindowsUpdateMouse(void)
     int x, y;
     Uint8 state;
 
-#ifdef TARGET_UNIX
+#ifdef AA_USE_RESSCALE_PIPELINE
     state = ResScaleGetMouseState(&x, &y);  /* logical LOGICAL_WxLOGICAL_H */
 #else
     state = SDL_GetMouseState(&x, &y);
@@ -123,7 +134,7 @@ void WindowsUpdateEvents(void)
     static int altPressed = FALSE;
 
     while ( SDL_PollEvent(&event) ) {
-#ifdef TARGET_UNIX
+#ifdef AA_USE_RESSCALE_PIPELINE
         ResScaleEvent(&event);   /* window->logical coords + hotkeys */
 #endif
         switch (event.type) {
@@ -139,7 +150,15 @@ void WindowsUpdateEvents(void)
                     altPressed = TRUE;
                 } else if ((event.key.keysym.sym == SDLK_RETURN) && (altPressed)) {
                     // ALT-Enter toggles full screen
-#if 1
+#ifndef AA_USE_RESSCALE_PIPELINE
+                    /* RESSCALE's own ResScaleEvent (above) already handles
+                       Alt+Enter itself (see IHandleHotkey in RESSCALE.C),
+                       properly updating its own tracked window/shadow
+                       surfaces -- this raw fallback would fight it by
+                       reassigning `screen` (the RESSCALE-managed logical
+                       frame here, not the real window) out from under
+                       RESSCALE's own state, so it's for the plain
+                       (non-RESSCALE) path only. */
                     flags = screen->flags; /* Save the current flags in case toggling fails */
                     screen = SDL_SetVideoMode(0, 0, 0, screen->flags ^ SDL_FULLSCREEN); /*Toggles FullScreen Mode */
                     if(screen == NULL) screen = SDL_SetVideoMode(0, 0, 0, flags); /* If toggle FullScreen failed, then switch back */
@@ -229,7 +248,7 @@ void WindowsUpdate(char *p_screen, unsigned char *palette)
     SDL_Color colors[256];
     int i;
     unsigned char *src = (char *)surface->pixels;
-#ifndef TARGET_UNIX
+#ifndef AA_USE_RESSCALE_PIPELINE
     unsigned char *dst = (unsigned char *)largesurface->pixels;
     unsigned char *line;
 #endif
@@ -239,7 +258,7 @@ void WindowsUpdate(char *p_screen, unsigned char *palette)
     T_word32 tick = clock();
     static T_word32 lastTick = 0xFFFFEEEE;
     static double movingAverage = 0;
-#ifndef TARGET_UNIX
+#ifndef AA_USE_RESSCALE_PIPELINE
     T_word32 v;
 #endif
     T_word32 frac;
@@ -261,7 +280,7 @@ SleepMS((1000/CAP_SPEED_TO_FPS) - (tick-lastTick));
         colors[i].b = ((((unsigned int)*(palette++))&0x3F)<<2);
     }
     //SDL_SetColors(surface, colors, 0, 256);
-#ifdef TARGET_UNIX
+#ifdef AA_USE_RESSCALE_PIPELINE
     SDL_SetColors(screen, colors, 0, 256);
 
     /* TRUE-HIGHRES: compose the presentable frame -- natively rendered  */
@@ -278,12 +297,27 @@ SleepMS((1000/CAP_SPEED_TO_FPS) - (tick-lastTick));
         }
         {
             unsigned char *fr = HighResFrame();
+            /* HighResFrame()'s own row-to-row stride, NOT LOGICAL_W: the
+               frame buffer is always allocated (and its rows always
+               HIGHRES_MAX_STRIDE bytes apart) at HIGHRES_MAX_SCALE
+               regardless of the active runtime scale -- see HIGHRES.C's
+               own comment on HighResInit. Using LOGICAL_W here (correct
+               back when the buffer's real stride matched it 1:1) reads
+               every row from the wrong offset whenever the active scale
+               is below the max, landing on a real row only 1 time in
+               (HIGHRES_MAX_SCALE / scale) and on that row's unwritten
+               (zeroed) padding otherwise -- confirmed on real Windows 95
+               hardware as periodic black horizontal stripes through the
+               entire UI/3D view. LOGICAL_W remains correct as the copy
+               *length* -- screen->pixels is genuinely LOGICAL_W bytes
+               wide per row -- only the source stride was wrong. */
+            size_t frStride = (size_t)HighResFrameStride();
             int yy;
 
             for (yy = 0; yy < LOGICAL_H; yy++)
                 memcpy((unsigned char *)screen->pixels
                            + (size_t)yy * screen->pitch,
-                       fr + (size_t)yy * LOGICAL_W,
+                       fr + (size_t)yy * frStride,
                        LOGICAL_W);
         }
     } else  {
@@ -376,11 +410,16 @@ int SDL_main(int argc, char *argv[])
 
     atexit(SDL_Quit);
 
-#ifdef TARGET_UNIX
+#ifdef AA_USE_RESSCALE_PIPELINE
     /* RESSCALE opens the real window per resolution.ini (any size,
        fullscreen, letterboxing) and hands back the fixed logical frame
        the game/HIGHRES pipeline fills each frame.                       */
     ResScaleInit();
+    /* Must happen before LOGICAL_W/LOGICAL_H are evaluated just below --
+       both expand to 320/200 * VIEW3D_SCALE, which is now a runtime
+       variable (see 3D_VIEW.H) driven by resolution.ini's detail=
+       setting instead of a hardcoded constant. */
+    View3dSetActiveScale((T_word16)ResScaleGetDetail());
     screen = ResScaleSetVideoMode(LOGICAL_W, LOGICAL_H, 8, SDL_SWSURFACE);
 #else
 #ifdef NDEBUG
@@ -391,7 +430,7 @@ int SDL_main(int argc, char *argv[])
 #endif
     SDL_WM_SetCaption("Amulets & Armor", "Amulets & Armor");
     SDL_ShowCursor(SDL_DISABLE);
-#ifdef TARGET_UNIX
+#ifdef AA_USE_RESSCALE_PIPELINE
     /* Confine the OS cursor to the game window for the whole session --
        previously this only happened while MouseRelativeModeOn (mouselook)
        was active, so the cursor was free to leave the window any time the
@@ -407,7 +446,7 @@ int SDL_main(int argc, char *argv[])
           return 1;
     }
 
-#ifdef TARGET_UNIX
+#ifdef AA_USE_RESSCALE_PIPELINE
     surface = SDL_CreateRGBSurface(SDL_SWSURFACE, SCREEN_WIDTH, SCREEN_HEIGHT, 8, 0, 0, 0, 0);
 #else
     surface = SDL_CreateRGBSurface(SDL_SWSURFACE, 320, 240, 8, 0, 0, 0, 0);
@@ -416,7 +455,7 @@ int SDL_main(int argc, char *argv[])
         printf("Could not create overlay: %s\n", SDL_GetError());
         return 1;
     }
-#ifndef TARGET_UNIX
+#ifndef AA_USE_RESSCALE_PIPELINE
     largesurface = SDL_CreateRGBSurface(SDL_SWSURFACE, 640, 400, 8, 0, 0, 0, 0);
     if (largesurface == NULL) {
         printf("Could not create overlay: %s\n", SDL_GetError());
@@ -430,6 +469,8 @@ int SDL_main(int argc, char *argv[])
 #ifdef TARGET_UNIX
     signal(SIGINT, HandleUnixSignal);
     signal(SIGTERM, HandleUnixSignal);
+#endif
+#ifdef AA_USE_RESSCALE_PIPELINE
     for (y=0; y<SCREEN_HEIGHT; y++) {
         for (x=0; x<SCREEN_WIDTH; x++, pixels++) {
             if ((x == 0) || (x == (SCREEN_WIDTH-1)) || (y == 0) || (y == (SCREEN_HEIGHT-1)))

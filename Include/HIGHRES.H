@@ -30,6 +30,12 @@ extern "C" {
 
 #define HIGHRES_BASE_WIDTH   320
 #define HIGHRES_BASE_HEIGHT  200
+/* MUST equal VIEW3D_SCALE_MAX (3D_VIEW.H) -- see that constant's own
+   comment, and HighResInit()'s in HIGHRES.C, for why: the frame buffer
+   HighResInit() allocates is always strided at this MAX regardless of
+   the scale actually requested, and 3D_VIEW.C's View3dInitialize() walks
+   that same buffer assuming a stride of MAX_VIEW3D_WIDTH (320 *
+   VIEW3D_SCALE_MAX) -- the two must move together. */
 #define HIGHRES_MAX_SCALE    6
 
 /* Set up the frame at the given integer scale (1..HIGHRES_MAX_SCALE).    */

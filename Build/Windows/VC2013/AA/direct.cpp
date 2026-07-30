@@ -16,26 +16,42 @@ extern "C" {
 #include "KEYBOARD.H"
 #include "MOUSEMOD.H"
 
+/* Not just TARGET_UNIX: the real (mingw/GCC-built) Windows 9x target
+   uses the same RESSCALE/HighRes pipeline now too -- see main.c's own
+   AA_USE_RESSCALE_PIPELINE (that name isn't shared across translation
+   units, so this repeats the same defined(TARGET_UNIX) ||
+   defined(__GNUC__) condition directly). Needs 3D_VIEW.H for the
+   runtime VIEW3D_SCALE this file's mouse-coordinate conversion below
+   depends on -- only the original MSVC-built Windows client, which
+   never runs RESSCALE at all, doesn't need it. */
+#if defined(TARGET_UNIX) || defined(__GNUC__)
+#include "3D_VIEW.H"
+#endif
+
 static T_buttonClick G_mouseButton = 0 ;
 static T_word16 G_mouseX = 0 ;
 static T_word16 G_mouseY = 0 ;
 
 T_void DirectMouseSet(T_word16 newX, T_word16 newY)
 {
-    /* newX/newY arrive in the raw window/logical coordinate space, which
-       is always 2x the game's own 320x200 UI space (Windows: a hardcoded
-       640x400 window; Unix: RESSCALE's logical surface, LOGICAL_W/H =
-       320/200 * VIEW3D_SCALE, VIEW3D_SCALE == 2 -- see 3D_VIEW.H). Halve
-       unconditionally so the clamp below (and G_mouseX/Y generally)
-       operate in the UI's actual coordinate space; this used to be
-       skipped on TARGET_UNIX, which was correct back when the Unix
-       logical surface was still 320x200, but left every position past
-       the window's horizontal/vertical midpoint clamped to 319/199
-       instead of continuing to the true edge once VIEW3D_SCALE made it
-       640x400 too (visible as the cursor appearing to lag behind /
-       "fall off" near the bottom and right edges). */
+    /* newX/newY arrive in the raw window/logical coordinate space. On
+       the RESSCALE/HighRes pipeline (TARGET_UNIX, or the real mingw-built
+       Windows 9x target) that space is LOGICAL_W/H = 320/200 *
+       VIEW3D_SCALE, and VIEW3D_SCALE is now a runtime "Level of Detail"
+       setting (1..3, see 3D_VIEW.H) rather than the hardcoded 2 it used
+       to be -- dividing by a fixed 2 here left every position past half
+       the window's width/height clamped to 319/199 at detail=1 (visible
+       as the cursor seeming locked in the upper-left quadrant), or would
+       have under-scaled it at detail=3. Only the original MSVC-built
+       Windows client (never on the RESSCALE pipeline, always a hardcoded
+       640x400 window) still needs the fixed halving. */
+#if defined(TARGET_UNIX) || defined(__GNUC__)
+    newX = (T_word16)(newX / VIEW3D_SCALE);
+    newY = (T_word16)(newY / VIEW3D_SCALE);
+#else
 newX >>= 1;
 newY >>= 1;
+#endif
 #ifdef TARGET_UNIX
     /* In mouselook (relative mode), don't update cursor position from
      * absolute OS coords — the in-game cursor must stay fixed. */
@@ -59,9 +75,20 @@ void OutsideMouseDriverGet(T_word16 *xPos, T_word16 *yPos)
 
 void OutsideMouseDriverSet(T_word16 xPos, T_word16 yPos)
 {
-#ifdef TARGET_UNIX
-    SDL_WarpMouse(xPos*2, yPos*2);
-    DirectMouseSet(xPos, yPos);
+    /* xPos/yPos arrive in UI space (0-319/0-199, same as
+       OutsideMouseDriverGet's G_mouseX/Y); both SDL_WarpMouse (needs
+       real window/logical coordinates) and DirectMouseSet (expects that
+       same raw space -- it divides back down to UI space itself, see
+       above) need them converted the same direction DirectMouseSet
+       divides, i.e. multiplied by VIEW3D_SCALE. Previously hardcoded *2
+       for both -- and inconsistently passed DirectMouseSet raw
+       (un-multiplied) xPos/yPos on TARGET_UNIX, silently relying on
+       DirectMouseSet's own now-removed unconditional halving to happen
+       to cancel out; made explicit and correct here instead of
+       depending on that coincidence. */
+#if defined(TARGET_UNIX) || defined(__GNUC__)
+    SDL_WarpMouse((Uint16)(xPos*VIEW3D_SCALE), (Uint16)(yPos*VIEW3D_SCALE));
+    DirectMouseSet((T_word16)(xPos*VIEW3D_SCALE), (T_word16)(yPos*VIEW3D_SCALE));
 #else
     SDL_WarpMouse(xPos*2, yPos*2);
     DirectMouseSet(xPos*2, yPos*2);

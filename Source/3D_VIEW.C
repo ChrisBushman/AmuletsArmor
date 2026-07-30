@@ -782,7 +782,7 @@ static E_Boolean G_view3dFrameDrawn = FALSE ;
 
 #define MAX_INTERSECTIONS 50
 //#define MAX_INTERSECTIONS 100
-#define MAX_WALL_RUNS     (8000*VIEW3D_SCALE)
+#define MAX_WALL_RUNS     (8000*VIEW3D_SCALE_MAX)
 //#define MAX_WALL_RUNS     16000
 #define MAX_FLOOR_INDEXES 40
 //#define MAX_FLOOR_INDEXES 100
@@ -802,6 +802,19 @@ T_sword16 VIEW3D_HALF_HEIGHT = 70 ;
 T_sword16 VIEW3D_EVEN_HALF_HEIGHT = 70 ;
 T_sword16 VIEW3D_CLIP_LEFT = 100 ;
 T_sword16 VIEW3D_CLIP_RIGHT = 200 ;
+
+/* Default of 2 matches the value VIEW3D_SCALE was hardcoded to before it
+   became a runtime setting -- see 3D_VIEW.H. */
+T_word16 G_view3dActiveScale = 2 ;
+
+T_void View3dSetActiveScale(T_word16 scale)
+{
+    if (scale < 1)
+        scale = 1 ;
+    else if (scale > VIEW3D_SCALE_MAX)
+        scale = VIEW3D_SCALE_MAX ;
+    G_view3dActiveScale = scale ;
+}
 
 
 ///T_byte8 *GG_palette ;
@@ -930,7 +943,7 @@ static T_void IDrawWallSliceColumn(T_3dWallSlice *p_slice) ;
 /* ---------------- FLOOR INFO RELATED ------------------ */
 #define SECTOR_IS_WALL      0xFFFF
 #define SECTOR_IS_UNKNOWN   0x8000
-#define MAX_FLOOR_INFO      (5000*VIEW3D_SCALE)
+#define MAX_FLOOR_INFO      (5000*VIEW3D_SCALE_MAX)
 #define NEXT_IS_NONE        0
 #define SECTOR_NONE         0xFFFF
 
@@ -981,7 +994,7 @@ T_3dObjectRun G_objectRun[MAX_OBJECTS] ;
 /* 0xFFFF means no objects in that column. */
 T_word16 G_objectColStart[MAX_VIEW3D_WIDTH] ;
 T_word16 G_allocatedColRun = 0 ;
-#define MAX_OBJECT_COLUMN_RUNS  (8000*VIEW3D_SCALE)
+#define MAX_OBJECT_COLUMN_RUNS  (8000*VIEW3D_SCALE_MAX)
 T_3dObjectColRun G_objectColRunList[MAX_OBJECT_COLUMN_RUNS] ;
 
 T_word16 G_screenObjectPosition[MAX_VIEW3D_WIDTH] ;
