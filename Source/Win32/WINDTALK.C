@@ -13,6 +13,8 @@
 #include "../DITALKP.H"
 #endif
 #include "MEMORY.H"
+#include "ipx_client.h"
+#include "TICKER.H"
 
 /* Callback routines to handle receiving and requests to send. */
 static T_directTalkReceiveCallback G_receiveCallback = NULL ;
@@ -191,8 +193,21 @@ T_void DirectTalkDisconnect(T_void)
  * @return Line/Connection status.
  */
 /*--------------------------------------------------------------------------*/
+/* How long a real (IPX) connection can go without receiving anything from
+   the server -- including the periodic keepalive IPXClientPoll() itself
+   sends every IPX_KEEPALIVE_INTERVAL (2s) -- before it's treated as
+   dropped. A few missed round-trips' worth of margin, well under
+   AAServer's own 900s connection-table eviction, so the player finds out
+   quickly instead of the line silently claiming CONNECTED forever. */
+#define DISCONNECT_THRESHOLD_TICKS (10 * TICKS_PER_SECOND)
+
 E_directTalkLineStatus DirectTalkGetLineStatus(T_void)
 {
+    if (G_ipxEnabled) {
+        if (IPXGetTicksSinceLastRecv() > DISCONNECT_THRESHOLD_TICKS)
+            return DIRECT_TALK_LINE_STATUS_TIMED_OUT ;
+    }
+
     return DIRECT_TALK_LINE_STATUS_CONNECTED ;
 }
 

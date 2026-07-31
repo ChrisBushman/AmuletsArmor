@@ -91,12 +91,20 @@ ALL_CXXFLAGS := $(ARCHFLAGS) $(OPT_FLAGS) $(DEFINES) $(SDL_CFLAGS) $(INCLUDES) $
 
 TARGET      := $(BUILD_DIR)/amulets-armor
 DUMP_TARGET := $(BUILD_DIR)/aa-character-dump
+# Standalone network reliability test harness (see Utils/aa_net_test.c and
+# the top-level CMakeLists.txt's own aa-net-test target) -- reuses
+# ipx_client.cpp's existing object/pattern rule below rather than
+# duplicating the toolchain setup in a separate Makefile; doesn't touch
+# the real game's own TARGET/OBJS at all.
+NET_TEST_TARGET := $(BUILD_DIR)/aa-net-test
 
-.PHONY: all clean run dump
+.PHONY: all clean run dump net-test
 
 all: $(TARGET)
 
 dump: $(DUMP_TARGET)
+
+net-test: $(NET_TEST_TARGET)
 
 $(TARGET): $(OBJS)
 	$(CXX) $(ARCHFLAGS) -o $@ $(OBJS) $(SDL_LIBS)
@@ -106,6 +114,13 @@ $(DUMP_TARGET): $(BUILD_DIR)/character_dump_json.c.o
 
 $(BUILD_DIR)/character_dump_json.c.o: $(UTILS_DIR)/character_dump_json.c | $(BUILD_DIR)
 	$(CC) $(ARCHFLAGS) $(OPT_FLAGS) $(STD_FLAGS) -DTARGET_UNIX=1 -I$(INC_DIR) $(DEPFLAGS) -c $< -o $@
+
+$(NET_TEST_TARGET): $(BUILD_DIR)/aa_net_test.c.o $(BUILD_DIR)/ipx_client.cpp.o
+	$(CXX) $(ARCHFLAGS) -o $@ $^ $(SDL_LIBS)
+
+$(BUILD_DIR)/aa_net_test.c.o: $(UTILS_DIR)/aa_net_test.c | $(BUILD_DIR)
+	$(CC) $(ARCHFLAGS) $(OPT_FLAGS) $(STD_FLAGS) -DTARGET_UNIX=1 -DAA_REAL_SDL12=1 \
+	    $(SDL_CFLAGS) -I$(SRC_DIR)/Win32 $(DEPFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/%.C.o: %.C | $(BUILD_DIR)
 	$(CC) $(ALL_CFLAGS) -x c -c $< -o $@
@@ -121,6 +136,7 @@ $(BUILD_DIR):
 
 -include $(OBJS:.o=.d)
 -include $(BUILD_DIR)/character_dump_json.c.d
+-include $(BUILD_DIR)/aa_net_test.c.d
 
 clean:
 	rm -rf $(BUILD_DIR)

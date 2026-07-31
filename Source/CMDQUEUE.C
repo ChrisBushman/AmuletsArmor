@@ -6,11 +6,23 @@
  * the client to the server.  As the commands are sent, an ACK packet
  * must be received before the next one is processed.  BUT, this isn't a
  * linear list of commands, but a list per packet type allowing most
- * commands to be handled in a mostly parallel format.  Most of this is
- * code has been replaced by the CSYNCPCK synchronized communication code
- * and the rest is incorrectly implemented for a peer to peer network
- * instead of a client/server network.
- * MORE WORK GOES HERE!
+ * commands to be handled in a mostly parallel format.  Most of the ongoing
+ * gameplay-sync traffic has since been replaced by the CSYNCPCK
+ * synchronized communication code.
+ *
+ * This comment used to warn that the rest was "incorrectly implemented
+ * for a peer to peer network instead of a client/server network" --
+ * traced every live NULL-destination (broadcast) send still going
+ * through here as of this investigation and found that's no longer true:
+ * CSYNCPCK.C's own broadcast-style sends are commented out in favor of
+ * explicit per-recipient DirectTalkSetDestination() loops, and
+ * PeopleHereSendPacketToGroup() (PEOPHERE.C) already addresses each group
+ * member individually rather than broadcasting. The one remaining
+ * NULL-destination call (ClientSendPlayerIDSelf(), CLI_SEND.C) is a
+ * LOSSY identity announcement that's meant to reach every other player,
+ * so relaying it to all connected clients (AAServer's broadcast
+ * semantics) is the intended behavior, not a leftover LAN-broadcast
+ * assumption.
  *
  * @addtogroup CMDQUEUE
  * @brief Queue of Packets and Commands for Networking

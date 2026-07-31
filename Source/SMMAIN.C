@@ -12,9 +12,11 @@
  *<!-----------------------------------------------------------------------*/
 #include "CLIENT.H"
 #include "MEMORY.H"
+#include "MESSAGE.H"
 #include "SMCCHOOS.H"
 #include "SMCPLAY.H"
 #include "SMMAIN.H"
+#include "TICKER.H"
 
 //#undef DebugRoutine
 //#define DebugRoutine(name) { puts(name) ; DebugAddRoutine(name, __FILE__, __LINE__) ; }
@@ -934,6 +936,14 @@ T_void SMMainLogoffExit(
  *  @param extraData -- Not used
  *
  *<!-----------------------------------------------------------------------*/
+/* Ticks (TickerGet() units) at which SMMainDisconnectedEnter was last
+   called -- used by SMMainDisconnectedIdle to auto-return to the connect
+   screen a few seconds later instead of sitting here forever (its own
+   exit condition, SMMAIN_FLAG_DISCONNECT_COMPLETE, was previously never
+   set TRUE by anything). */
+static T_word32 G_disconnectedEnterTick = 0 ;
+#define DISCONNECTED_SCREEN_TICKS (3 * TICKS_PER_SECOND)
+
 T_void SMMainDisconnectedEnter(
            T_stateMachineHandle handle,
            T_word32 extraData)
@@ -946,6 +956,9 @@ T_void SMMainDisconnectedEnter(
     DebugCheck(p_data != NULL) ;
 
 //    SMCDisconnectInitialize() ;
+
+    MessageAdd((T_byte8 *)"Connection to server lost.") ;
+    G_disconnectedEnterTick = TickerGet() ;
 
     SMMainSetFlag(
         SMMAIN_FLAG_DISCONNECT_COMPLETE,
@@ -977,6 +990,15 @@ T_void SMMainDisconnectedIdle(
     DebugCheck(p_data != NULL) ;
 
 //    SMCDisconnectUpdate() ;
+
+    /* Give the player a moment to see the message, then return to the
+       connect screen automatically -- nothing else ever sets this flag,
+       so without it this state would otherwise hold indefinitely. */
+    if ((TickerGet() - G_disconnectedEnterTick) >= DISCONNECTED_SCREEN_TICKS) {
+        SMMainSetFlag(
+            SMMAIN_FLAG_DISCONNECT_COMPLETE,
+            TRUE) ;
+    }
 
     DebugEnd() ;
 }

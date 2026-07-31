@@ -13,6 +13,9 @@ void IPXGetUniqueAddress(unsigned char address[6]);
 unsigned char *IPXGetDestinationAddress(void);
 void IPXSetDestinationAddress(unsigned char address[6]);
 void IPXSetDestinationAddressAll(void);
+int IPXSendKeepalive(void);
+unsigned int IPXGetTicksSinceLastRecv(void); /* T_word32 */
+void IPXSetSimulatedPacketLoss(int percent); /* test-only, see ipx_client.cpp */
 
 #ifdef __cplusplus
 }

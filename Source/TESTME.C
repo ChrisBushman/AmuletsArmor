@@ -98,6 +98,18 @@ void UpdateCmdqueue(void)
     CmdQUpdateAllReceives() ;
     CmdQUpdateAllSends() ;
 
+    /* DirectTalkGetLineStatus() used to always report CONNECTED, so a
+       silently-dropped network session was never surfaced to the player.
+       Checked every tick here (self-server/single-player is unaffected --
+       DirectTalkGetLineStatus() only reports anything but CONNECTED when
+       a real IPX connection is active). SMMAIN_FLAG_DROPPED only has an
+       effect while in a state that checks it (see SMMAIN.C), and gets
+       cleared again on entering PLAY_GAME/LOGOFF, so it's safe to set
+       repeatedly while disconnected. */
+    if (DirectTalkGetLineStatus() != DIRECT_TALK_LINE_STATUS_CONNECTED) {
+        SMMainSetFlag(SMMAIN_FLAG_DROPPED, TRUE) ;
+    }
+
     DebugEnd() ;
     TICKER_TIME_ROUTINE_ENDM("UpdateCmdqueue", 500) ;
 }

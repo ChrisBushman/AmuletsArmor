@@ -351,6 +351,12 @@ T_void PacketReceiveData(T_void *p_data, T_word16 size)
     fprintf(G_fpRecv, "\n") ;
 #endif
 
+    if ((size < sizeof(T_packetHeader)) || (size > sizeof(newPacket))) {
+        printf("PACKET: Ignoring packet with bad size (%d bytes)\n", size) ;
+        DebugEnd() ;
+        return ;
+    }
+
     memcpy(&newPacket, p_data, size) ;
 
     /* Header id/checksum arrive in wire (little-endian) byte order; swap
@@ -358,6 +364,32 @@ T_void PacketReceiveData(T_void *p_data, T_word16 size)
        PacketGet() sees normal host-native values. */
     newPacket.header.id = EndianLE32(newPacket.header.id) ;
     newPacket.header.checksum = EndianLE16(newPacket.header.checksum) ;
+
+    /* packetLength reflects however many bytes of data[] this packet
+       claims to carry -- possibly corrupted at this point, so bound it
+       against both the fixed data[] capacity and what was actually
+       received before IPacketComputeChecksum() below indexes data[]
+       with it. */
+    if ((newPacket.header.packetLength > LONG_PACKET_LENGTH)
+            || ((T_word16)(sizeof(T_packetHeader) + newPacket.header.packetLength) > size)) {
+        printf("PACKET: Ignoring packet with invalid length field (%d)\n",
+                newPacket.header.packetLength) ;
+        DebugEnd() ;
+        return ;
+    }
+
+    /* The checksum has always been computed and sent (see
+       PacketSendShort/Long/AnyLength above), but never actually verified
+       here -- a corrupted packet was silently accepted and handed to the
+       game as if it were valid, which is worse than having no checksum
+       at all. */
+    if (IPacketComputeChecksum((T_packetEitherShortOrLong *)&newPacket)
+            != newPacket.header.checksum) {
+        printf("PACKET: Dropping packet with bad checksum (id=%u)\n",
+                newPacket.header.id) ;
+        DebugEnd() ;
+        return ;
+    }
 
     newPacketFilled = TRUE ;
     PacketPrint(p_data, size);

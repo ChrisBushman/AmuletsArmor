@@ -156,6 +156,26 @@ static Bit8u sendBuffer[IPXBUFFERSIZE];    // Incoming packet buffer
 static unsigned char G_destinationAddr[6];
 static T_word32 G_ipxFrameCounter = 0;
 
+/* Ticks (TickerGet() units) of the last datagram actually received from
+   the server, and of the last keepalive we sent -- used to detect a
+   silently-dropped connection (dead NAT mapping, server-side eviction,
+   network loss) from the client side, since nothing previously tracked
+   this at all. Reset at connect time so a fresh session doesn't
+   immediately look stale before any real traffic has flowed. */
+static T_word32 G_lastRecvTick = 0;
+static T_word32 G_lastKeepaliveSentTick = 0;
+
+/* Test-only: lets a harness (Utils/aa_net_test.c) exercise the connect
+   retry/keepalive logic against real simulated loss via SDL_net's own
+   SDLNet_UDP_SetPacketLoss(), rather than just trusting it works. Not
+   wired into any real gameplay UI/flow -- 0 (the default) is a no-op. */
+static int G_simulatedPacketLossPercent = 0;
+
+void IPXSetSimulatedPacketLoss(int percent)
+{
+    G_simulatedPacketLossPercent = percent;
+}
+
 static Bit16u swapByte(Bit16u sockNum) {
 	return (((sockNum>> 8)) | (sockNum << 8));
 }
@@ -396,10 +416,30 @@ int IPXClientPoll(char *p_data, unsigned int *size)
 	inPacket.channel = UDPChannel;
 	T_word32 tick = clock();
 
+	// Keep the session alive with a periodic round-trip regardless of
+	// what else is happening -- some game states (e.g. real-time 3D
+	// dungeon play) don't otherwise generate guaranteed regular traffic,
+	// unlike the hard-coded-form UI's own unrelated periodic ping, which
+	// only fires in that one mode. This runs every tick via the same
+	// chain IPXClientPoll itself is called from (UpdateCmdqueue() ->
+	// CmdQUpdateAllReceives() -> ... ), so it's unconditional.
+#define IPX_KEEPALIVE_INTERVAL (2 * TICKS_PER_SECOND)
+	if (ipxClientSocket
+	        && ((TickerGet() - G_lastKeepaliveSentTick) >= IPX_KEEPALIVE_INTERVAL)) {
+	    IPXSendKeepalive();
+	    G_lastKeepaliveSentTick = TickerGet();
+	}
+
 	// Its amazing how much simpler UDP is than TCP
 	// Is there a packet to process?
 	numrecv = SDLNet_UDP_Recv(ipxClientSocket, &inPacket);
     if (numrecv) {
+        // Any successful receive -- special/ack/payload-bearing alike --
+        // proves the path to the server is still alive; this is the only
+        // peer we ever talk to directly, so it's a sufficient liveness
+        // signal on its own (see IPXGetTicksSinceLastRecv()).
+        G_lastRecvTick = TickerGet();
+
         // Is the received packet big enough to be an IPX packet over UDP?
         if (inPacket.len >= sizeof(IPXHeader)) {
             // Get access to the IPX header that is at the start of the UDP
@@ -504,6 +544,91 @@ void IPXSetDestinationAddressAll(void)
 }
 
 /*--------------------------------------------------------------------------*
+ * Routine: IBuildRegistrationPacket
+ *--------------------------------------------------------------------------*/
+/**
+ * Fills in a zero-dest/zero-src "echo" packet -- AAServer treats this as a
+ * registration request (fresh connect) or a re-registration/keepalive
+ * (already-known sender) and always replies with an ack. Shared by
+ * IPXConnectToServer()'s initial send/retries and IPXSendKeepalive(), so
+ * both build the exact same wire content the server already knows how to
+ * handle -- no server-side changes needed to support a keepalive.
+ *
+ * @param p_header -- Header to fill in and send
+ * @param p_packet -- Packet structure to fill in and send
+ *
+ * @return Result of SDLNet_UDP_Send (0 = failed to send)
+ *
+ * <!-----------------------------------------------------------------------*/
+static int IBuildRegistrationPacket(IPXHeader *p_header, UDPpacket *p_packet)
+{
+    // Reset checksum to 0xFFFF and set the length to the proper header size
+    SDLNet_Write16(0xffff, p_header->checkSum);
+    SDLNet_Write16(sizeof(*p_header), p_header->length);
+
+    // An Echo packet with zeroed dest and src is a server registration
+    // (or, for an already-known sender, a re-registration/keepalive) packet.
+    SDLNet_Write32(0, p_header->dest.network);
+    p_header->dest.addr.byIP.host = 0x0;
+    p_header->dest.addr.byIP.port = 0x0;
+    SDLNet_Write16(0x2, p_header->dest.socket);
+
+    SDLNet_Write32(0, p_header->src.network);
+    p_header->src.addr.byIP.host = 0x0;
+    p_header->src.addr.byIP.port = 0x0;
+    SDLNet_Write16(0x2, p_header->src.socket);
+    p_header->transControl = 0;
+
+    p_packet->data = (Uint8 *)p_header;
+    p_packet->len = sizeof(*p_header);
+    p_packet->maxlen = sizeof(*p_header);
+    p_packet->channel = UDPChannel;
+    p_packet->address = ipxServConnIp;
+
+    return SDLNet_UDP_Send(ipxClientSocket, p_packet->channel, p_packet);
+}
+
+/*--------------------------------------------------------------------------*
+ * Routine: IPXSendKeepalive
+ *--------------------------------------------------------------------------*/
+/**
+ * Sends a re-registration/keepalive packet to the server so a session
+ * with no other traffic (e.g. sitting idle on a hard-coded UI form, which
+ * has its own unrelated periodic ping but only while in that mode) still
+ * produces regular round-trips -- both to keep the server's own
+ * connection-table timeout from expiring, and so the client has fresh
+ * traffic to judge IPXGetTicksSinceLastRecv() against.
+ *
+ * @return Result of SDLNet_UDP_Send (0 = failed to send)
+ *
+ * <!-----------------------------------------------------------------------*/
+int IPXSendKeepalive(void)
+{
+    UDPpacket packet;
+    IPXHeader header;
+
+    if (!ipxClientSocket)
+        return 0;
+
+    return IBuildRegistrationPacket(&header, &packet);
+}
+
+/*--------------------------------------------------------------------------*
+ * Routine: IPXGetTicksSinceLastRecv
+ *--------------------------------------------------------------------------*/
+/**
+ * @brief Ticks (TickerGet() units) since the last datagram was actually
+ * received from the server -- 0 right after a fresh connect. Used by
+ * WINDTALK.C's DirectTalkGetLineStatus() to detect a silently-dropped
+ * connection instead of always reporting connected.
+ *
+ * <!-----------------------------------------------------------------------*/
+T_word32 IPXGetTicksSinceLastRecv(void)
+{
+    return TickerGet() - G_lastRecvTick;
+}
+
+/*--------------------------------------------------------------------------*
  * Routine: IPXConnectToServer
  *--------------------------------------------------------------------------*/
 /**
@@ -529,11 +654,6 @@ int IPXConnectToServer(const char *strAddr)
         return 0;
     }
 
-	regHeader.src.socket[0] = 0x86;
-    regHeader.src.socket[1] = 0x9C;
-    regHeader.dest.socket[0] = 0x86;
-    regHeader.dest.socket[1] = 0x9C;
-
     // Determined the proper IP address of the target
     // Now, generate the MAC address we'll use for this computer.
     // This is made by zeroing out the first two
@@ -558,34 +678,13 @@ int IPXConnectToServer(const char *strAddr)
         return 0;
     }
 
-    //ipxClientSocket = SDLNet_TCP_Open(&ipxServConnIp);
-    // Reset checksum to 0xFFFF and set the length to the proper regHeader size
-    SDLNet_Write16(0xffff, regHeader.checkSum);
-    SDLNet_Write16(sizeof(regHeader), regHeader.length);
-
-    // An Echo packet with zeroed dest and src is a server registration packet
-    // Zero the destination
-    SDLNet_Write32(0, regHeader.dest.network);
-    regHeader.dest.addr.byIP.host = 0x0;
-    regHeader.dest.addr.byIP.port = 0x0;
-    SDLNet_Write16(0x2, regHeader.dest.socket);
-
-    // Zero the source
-    SDLNet_Write32(0, regHeader.src.network);
-    regHeader.src.addr.byIP.host = 0x0;
-    regHeader.src.addr.byIP.port = 0x0;
-    SDLNet_Write16(0x2, regHeader.src.socket);
-    regHeader.transControl = 0; // echo packet
-
-    // Now setup the packet to send with just the header
-    regPacket.data = (Uint8 *)&regHeader;
-    regPacket.len = sizeof(regHeader);
-    regPacket.maxlen = sizeof(regHeader);
-    regPacket.channel = UDPChannel;
+    if (G_simulatedPacketLossPercent) {
+        SDLNet_UDP_SetPacketLoss(ipxClientSocket, G_simulatedPacketLossPercent);
+    }
 
     // Send registration echo packet to server.  If server doesn't get
     // this, client will not be registered
-    numsent = SDLNet_UDP_Send(ipxClientSocket, regPacket.channel, &regPacket);
+    numsent = IBuildRegistrationPacket(&regHeader, &regPacket);
 
     if(!numsent) {
         // Failed to send packet (didn't even go out!)
@@ -596,12 +695,22 @@ int IPXConnectToServer(const char *strAddr)
 
     // Wait for return packet from server.  Might still get lost.
     // This will contain our IPX address and port num
+    //
+    // A single registration packet with one 5-second wait used to be all
+    // this did -- but that packet (or the server's ack) routinely gets
+    // lost on the very first exchange through a fresh NAT/firewall mapping,
+    // and with no retry that failed the connection outright. Resend the
+    // same registration packet on an interval until either a response
+    // arrives or the total window elapses.
+#define IPX_CONNECT_RETRY_INTERVAL (1 * TICKS_PER_SECOND)
+#define IPX_CONNECT_TOTAL_TIMEOUT  (8 * TICKS_PER_SECOND)
     ticks = TickerGet();
+    Bit32u lastSendTicks = ticks;
 
     while(true) {
-        // Has 5 seconds paccked?
+        // Has the whole connect window elapsed?
         elapsed = TickerGet() - ticks;
-        if(elapsed > 5*TICKS_PER_SECOND) {
+        if(elapsed > IPX_CONNECT_TOTAL_TIMEOUT) {
             // Yes.  Timeout, stop here
             LOG_MSG("Timeout connecting to server at %s\n", strAddr);
             SDLNet_UDP_Close(ipxClientSocket);
@@ -620,9 +729,22 @@ int IPXConnectToServer(const char *strAddr)
             break;
         }
 
+        // No response yet -- resend the (unmodified) registration packet
+        // on an interval rather than silently waiting out the whole window.
+        if ((TickerGet() - lastSendTicks) >= IPX_CONNECT_RETRY_INTERVAL) {
+            LOG_MSG("IPX: No response yet, retrying registration to %s...\n", strAddr);
+            SDLNet_UDP_Send(ipxClientSocket, regPacket.channel, &regPacket);
+            lastSendTicks = TickerGet();
+        }
     }
 
     LOG_MSG("IPX: Connected to server.  IPX address is %d:%d:%d:%d:%d:%d\n", CONVIPX(localIpxAddr.netnode));
+
+    // Fresh session: start the last-received clock now rather than at
+    // whatever stale value a previous connection left it at, so
+    // IPXGetTicksSinceLastRecv() doesn't immediately look stale.
+    G_lastRecvTick = TickerGet();
+    G_lastKeepaliveSentTick = G_lastRecvTick;
 
     //incomingPacket.connected = true;
     //TIMER_AddTickHandler(&IPXClientPoll);

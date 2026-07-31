@@ -53,6 +53,15 @@ add_executable(aa-character-dump
     "${CMAKE_CURRENT_SOURCE_DIR}/Utils/character_dump_json.c"
 )
 
+# Standalone network reliability test harness (see Utils/aa_net_test.c's
+# own header comment) -- reuses ipx_client.cpp directly rather than
+# reimplementing the wire protocol, deliberately independent of
+# ${AA_EXE_NAME}'s SDL-video linkage: only SDL_net is needed here, not SDL.
+add_executable(aa-net-test
+    "${CMAKE_CURRENT_SOURCE_DIR}/Utils/aa_net_test.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Source/Win32/ipx_client.cpp"
+)
+
 # The project uses uppercase .C files as C sources; force C language mode.
 set_source_files_properties(${AA_CORE_SOURCES} PROPERTIES LANGUAGE C)
 
@@ -72,11 +81,19 @@ target_include_directories(aa-character-dump
         "${CMAKE_CURRENT_SOURCE_DIR}/Include"
 )
 
+target_include_directories(aa-net-test
+    PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/Source/Win32"
+)
+
 target_link_libraries(${AA_EXE_NAME}
     PRIVATE
         PkgConfig::SDL
         PkgConfig::SDL_NET
 )
+
+target_link_libraries(aa-net-test PRIVATE PkgConfig::SDL_NET)
+target_compile_definitions(aa-net-test PRIVATE WIN_IPX=1)
 
 target_compile_definitions(${AA_EXE_NAME}
     PRIVATE
@@ -100,6 +117,7 @@ if(UNIX)
     # Unix-based); this covers all of them with the one TARGET_UNIX path.
     target_compile_definitions(${AA_EXE_NAME} PRIVATE TARGET_UNIX=1)
     target_compile_definitions(aa-character-dump PRIVATE TARGET_UNIX=1)
+    target_compile_definitions(aa-net-test PRIVATE TARGET_UNIX=1)
 endif()
 
 if(UNIX AND NOT APPLE)
