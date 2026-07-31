@@ -182,6 +182,13 @@ T_void TownUIStart(T_word32 formNum)
         /* initialize list of people in chat area */
         G_chatList = DoubleLinkListCreate();
 
+        /* Backfill with everyone already known to be in town -- without
+           this, the list only ever grew via catching another player's
+           next location-change broadcast, so anyone already present
+           before we arrived (or before our own location had settled to
+           TOWN) was permanently missing with nothing to retry. */
+        PeopleHereGeneratePeopleInTown();
+
         /* allocate memory for chat messages */
         for (i = 0; i < TOWN_NUM_MESSAGES; i++) {
             G_messages[i] = MemAlloc(TOWN_MESSAGE_SIZE);

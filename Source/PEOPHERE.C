@@ -655,6 +655,49 @@ T_void PeopleHereGeneratePeopleInGame(T_gameGroupID groupID)
 }
 
 /*-------------------------------------------------------------------------*
+ * Routine:  PeopleHereGeneratePeopleInTown
+ *-------------------------------------------------------------------------*/
+/**
+ *  Populate the town hall chat list with everyone already known to be in
+ *  town. Unlike the guild list (PeopleHereGeneratePeopleInGame, called
+ *  from several trigger points precisely because it isn't safe to rely
+ *  on catching each peer's next state-change edge), the town chat list
+ *  was previously built *only* incrementally via PeopleHereUpdatePlayer
+ *  detecting a location transition -- TownUIStart() creates a fresh,
+ *  empty G_chatList every time the screen opens, with nothing to
+ *  backfill it. A player already in town whose next periodic
+ *  PLAYER_ID_SELF broadcast doesn't happen to land after we've settled
+ *  into PLAYER_ID_LOCATION_TOWN ourselves (visiting Town again after a
+ *  quest, or simply losing that race on first arrival) was never added
+ *  at all, with nothing to retry the addition later. Call this once when
+ *  entering the town screen so it doesn't depend on that timing.
+ *
+ *<!-----------------------------------------------------------------------*/
+T_void PeopleHereGeneratePeopleInTown(T_void)
+{
+    T_word16 i;
+    T_playerIDSelf *p = G_peopleList;
+    T_directTalkUniqueAddress ourID;
+    char playerLabel[MAX_CHAT_NAME_STRING];
+
+    DebugRoutine("PeopleHereGeneratePeopleInTown");
+
+    DirectTalkGetUniqueAddress(&ourID);
+
+    if (IGetOurLocation() == PLAYER_ID_LOCATION_TOWN) {
+        for (i = 0; i < MAX_PLAYERS_IN_WORLD; i++, p++) {
+            if ((p->name[0]) && (p->location == PLAYER_ID_LOCATION_TOWN)
+                    && (!CompareUniqueNetworkIDs(p->uniqueAddress, ourID))) {
+                GetPlayerLabel(p, playerLabel);
+                TownAddPerson(playerLabel);
+            }
+        }
+    }
+
+    DebugEnd();
+}
+
+/*-------------------------------------------------------------------------*
  * Routine:  PeopleHereGetOurLocation
  *-------------------------------------------------------------------------*/
 /**

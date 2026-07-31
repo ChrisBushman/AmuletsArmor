@@ -35,6 +35,7 @@ T_word16 PeopleHereGetOurAdventure(T_void) ;
 
 // Routines for handling a game about to start
 T_void PeopleHereGeneratePeopleInGame(T_gameGroupID groupID) ;
+T_void PeopleHereGeneratePeopleInTown(T_void) ;
 T_void PeopleHereStartGame(T_word16 firstLevel) ;
 T_word16 PeopleHereGetNumInGroupGame(void);
 

@@ -221,6 +221,71 @@ T_sword16 PacketSend(T_packetEitherShortOrLong *p_packet)
 }
 
 /*-------------------------------------------------------------------------*
+ * Routine:  PacketSendPreassignedId
+ *-------------------------------------------------------------------------*/
+/**
+ *  For CmdQueue's use only: sends a packet whose header.id was already
+ *  assigned once via PacketSetId() and must stay exactly that value for
+ *  every retransmission (CmdQUpdateAllReceives()'s ACK matching compares
+ *  against it later and needs it stable and in host-native order).
+ *
+ *  PacketSendShort/Long/AnyLength -- and therefore PacketSend() -- always
+ *  assign a *fresh* id via their own G_packetID counter and, worse,
+ *  perform their EndianLE32/EndianLE16 wire-order swap in place on the
+ *  caller's own struct. For a one-shot send that's harmless (nobody
+ *  reads that struct's header again), but CmdQueue calls PacketSend()
+ *  repeatedly on the very same persistent queue entry for retransmits --
+ *  every retry clobbered the queue's id with a new one, and on a
+ *  big-endian build the in-place swap left the *stored* id permanently
+ *  byte-swapped after the very first send (EndianLE32 is a no-op on
+ *  little-endian, which is exactly why this was invisible until a real
+ *  big-endian PPC sent a lossless packet). Both defeat ACK matching --
+ *  the queued id no longer matches what the wire/ACK actually carries --
+ *  so the packet is never recognized as acked and retransmits forever,
+ *  with the receiving side (no duplicate-id detection) displaying every
+ *  retry as if it were a distinct new message.
+ *
+ *  This builds a throwaway local copy for the actual wire-order
+ *  transmission and never writes back to *p_packet at all, so the
+ *  queue's own copy of header.id (and everything else) stays exactly as
+ *  CmdQueue set it, safe to send unlimited times.
+ *
+ *  @param p_packet -- Packet to send; header.id must already be set via
+ *      PacketSetId() and is read, never modified.
+ *
+ *  @return 0 (matches PacketSend()'s always-0 in practice -- neither
+ *      reports real transport failures, see DirectTalkSendData()).
+ *
+ *<!-----------------------------------------------------------------------*/
+T_sword16 PacketSendPreassignedId(T_packetEitherShortOrLong *p_packet)
+{
+    T_packetLong localCopy ;
+
+    DebugRoutine("PacketSendPreassignedId") ;
+    DebugCheck(p_packet != NULL) ;
+
+    memcpy(&localCopy, p_packet,
+            sizeof(T_packetHeader) + p_packet->header.packetLength) ;
+
+    localCopy.header.prefix = PACKET_PREFIX ;
+    DirectTalkGetUniqueAddress(&localCopy.header.sender) ;
+    /* header.id intentionally left as-is (copied above) -- that's the
+       whole point of this function. */
+    localCopy.header.checksum =
+            IPacketComputeChecksum((T_packetEitherShortOrLong *)&localCopy) ;
+
+    localCopy.header.id = EndianLE32(localCopy.header.id) ;
+    localCopy.header.checksum = EndianLE16(localCopy.header.checksum) ;
+
+    DirectTalkSendData((T_byte8 *)&localCopy,
+            (T_byte8)(sizeof(T_packetHeader) + localCopy.header.packetLength)) ;
+
+    DebugEnd() ;
+
+    return 0 ;
+}
+
+/*-------------------------------------------------------------------------*
  * Routine:  PacketSetId
  *-------------------------------------------------------------------------*/
 /**

@@ -248,6 +248,13 @@ T_void MemFree(T_void *p_data)
     T_memBlockHeader *p_header ;
     T_word16 pos ;
 
+    /* Match standard free(NULL) semantics -- several call sites pass
+       through a pointer that legitimately stays NULL when there was
+       nothing to allocate (e.g. an empty list), so treat it as a safe
+       no-op instead of asserting. */
+    if (p_data == NULL)
+        return ;
+
     DebugRoutine("MemFree") ;
     DebugCheck(p_data != NULL) ;
 

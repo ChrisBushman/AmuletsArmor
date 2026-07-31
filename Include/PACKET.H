@@ -50,6 +50,8 @@ T_sword16 PacketSendAnyLength(T_packetEitherShortOrLong *p_anyPacket) ;
 
 T_sword16 PacketSend(T_packetEitherShortOrLong *p_packet) ;
 
+T_sword16 PacketSendPreassignedId(T_packetEitherShortOrLong *p_packet) ;
+
 T_sword16 PacketGet(T_packetLong *p_packet) ;
 
 T_void PacketSetId (T_packetEitherShortOrLong *p_packet, T_word32 packetID);

@@ -300,6 +300,12 @@ static T_void GuildUIBuildMapList (T_void)
         /* alloc space for new map description block */
         p_mapStruct = MemAlloc (sizeof(T_mapDescriptionStruct));
         DebugCheck (p_mapStruct != NULL);
+        /* MemAlloc doesn't zero its block -- if this map's DES resource
+           is short a line (name/description never gets a pass below),
+           the field would otherwise be left as uninitialized heap
+           garbage instead of a safe NULL. */
+        p_mapStruct->name=NULL;
+        p_mapStruct->description=NULL;
 
         /* lock in data 'text file' */
         dataIn=(T_byte8 *)PictureLockData (stmp,&res);
@@ -382,11 +388,11 @@ static T_void GuildUIBuildMapList (T_void)
         /* build our list of maps on the fly */
         if (GuildUIPlayerCanVisitMap(listcount))
         {
-            sprintf (stmp,"^009%s",p_mapStruct->name);
+            sprintf (stmp,"^009%s",p_mapStruct->name ? p_mapStruct->name : "");
         }
         else
         {
-            sprintf (stmp,"^010%s",p_mapStruct->name);
+            sprintf (stmp,"^010%s",p_mapStruct->name ? p_mapStruct->name : "");
         }
 
         /* add stmp to list */
@@ -407,7 +413,18 @@ static T_void GuildUIBuildMapList (T_void)
     TxtboxCursBot(G_displayBoxes[GUILD_MAPS_LIST]);
     TxtboxBackSpace (G_displayBoxes[GUILD_MAPS_LIST]);
     TxtboxCursTop(G_displayBoxes[GUILD_MAPS_LIST]);
-    MemFree(listdata);
+    /* listdata can still be NULL here (no maps available to list at all --
+       the loop above never ran), same case that used to crash
+       TxtboxSetData a few lines up. Confirmed on real hardware: this
+       repo's own MemFree() (MEMORY.C) has a real DebugCheck(p_data !=
+       NULL), unlike the standard free() it wraps, so this unconditional
+       call logged a failure to error.log/stderr every time and kept
+       running with whatever state that left things in -- eventually
+       crashing later rather than here, which is why it didn't show up in
+       CrashReporter as this call site. The identical call earlier in this
+       same function (a few lines up) already guards for exactly this. */
+    if (listdata != NULL)
+        MemFree(listdata);
 
     GuildDisplayMapInfo (G_displayBoxes[GUILD_MAPS_LIST]);
 
@@ -637,8 +654,16 @@ static T_void GuildUIDrawGameList(T_void)
         /* find corresponding map information structure */
         p_map=GuildUIGetMapDescription(p_game->mapNumber);
 
+        /* Skip games whose map isn't in our local map list (e.g. a
+           game-list update naming a map we haven't loaded yet). */
+        if (p_map == NULL)
+        {
+            element=DoubleLinkListElementGetNext(element);
+            continue;
+        }
+
         /* make this data line */
-        sprintf (stmp,"%s\r",p_map->name);
+        sprintf (stmp,"%s\r",p_map->name ? p_map->name : "");
 
         /* add to list */
         if (listData != NULL) size=strlen(listData);
@@ -790,7 +815,11 @@ T_void GuildUIClearPlayers (T_void)
 /* returns a pointer to a map information structure for map mapIndex */
 static T_mapDescriptionStruct* GuildUIGetMapDescription (T_word16 mapIndex)
 {
-    T_mapDescriptionStruct *mapInfo;
+    /* Left uninitialized, this stayed as stack garbage (not NULL) when
+       G_mapList is empty -- the while loop below never assigns it --
+       which let a bogus pointer slip past every "!= NULL" guard at the
+       call sites. */
+    T_mapDescriptionStruct *mapInfo=NULL;
     T_doubleLinkListElement element;
     DebugRoutine ("GuildUIGetMapDescription");
 

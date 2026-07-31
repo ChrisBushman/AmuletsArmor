@@ -1060,6 +1060,19 @@ T_void TxtboxSetData (T_TxtboxID TxtboxID, T_byte8 *string)
     T_TxtboxStruct *p_Txtbox;
     T_word16 i,cnt=0;
     T_byte8 val;
+    /* A NULL string here used to be an immediate EXC_BAD_ACCESS crash
+       (strlen(NULL) below) -- confirmed on real hardware via GuildUIStart
+       (GUILDUI.C), which passes its locally-built listdata straight
+       through while still NULL if the loop that populates it never
+       executes (e.g. a character with no maps/quests unlocked). Rather
+       than only patching that one call site, guard here: this is a
+       shared, general-purpose primitive with call sites throughout the
+       UI code, any of which could hit the same data-driven "turned out
+       to be nothing to show" case. Treat NULL the same as an empty
+       string. */
+    static T_byte8 emptyString[1] = "" ;
+    if (string == NULL)
+        string = emptyString ;
     DebugRoutine ("TxtboxSetData");
     p_Txtbox=(T_TxtboxStruct *)TxtboxID;
 

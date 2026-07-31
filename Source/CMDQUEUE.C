@@ -533,8 +533,32 @@ T_void CmdQUpdateAllSends(T_void)
 
                         /* Let's send that packet to the given destination. */
                         DirectTalkSetDestination(&p_packet->destination);
+
+                        /* PacketSendPreassignedId(), not PacketSend(): the
+                           latter (via PacketSendShort/Long/AnyLength)
+                           unconditionally reassigns a *fresh* header.id on
+                           every call and performs its wire-order swap in
+                           place on the caller's own struct -- fine for a
+                           true one-shot send, but this same queue entry
+                           gets sent again on every retry, and both of
+                           those behaviors defeat the ACK matching in
+                           CmdQUpdateAllReceives() below, which depends on
+                           header.id staying the exact stable, host-native
+                           value CmdQueue assigned via PacketSetId() when
+                           first queued (see ICmdQSendPacket). Confirmed on
+                           real big-endian (PPC) hardware: the in-place
+                           swap left the *stored* id permanently
+                           byte-swapped after the very first send (a no-op
+                           on little-endian, which is why this was
+                           invisible until a real big-endian sender showed
+                           up), so the ACK for it could never match and the
+                           packet retried forever -- with the receiving
+                           side (no duplicate-id detection) displaying
+                           every retry as if it were a distinct new
+                           message. See PacketSendPreassignedId()'s own
+                           comment for the full explanation. */
                         status =
-                                PacketSend(
+                                PacketSendPreassignedId(
                                         (T_packetEitherShortOrLong *)(&p_packet->packet));
                         sentAny = TRUE;
 

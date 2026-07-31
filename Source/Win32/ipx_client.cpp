@@ -458,9 +458,16 @@ int IPXClientPoll(char *p_data, unsigned int *size)
             // Is there data in this packet?
             if (inPacket.len > sizeof(IPXHeader)) {
                 // Copy the IPX data payload over
-                memcpy((void *)p_data, (void *)&p_header[1],
-                        inPacket.len - sizeof(IPXHeader));
-                *size = inPacket.len;
+                //
+                // *size must be the number of bytes actually copied above
+                // (the payload past the stripped IPX header), not the raw
+                // inPacket.len this used to report -- that overstated the
+                // real size by exactly sizeof(IPXHeader), and the caller
+                // (PacketReceiveData) trusted it for its own memcpy into a
+                // fixed-size T_packetLong buffer, overflowing it by that
+                // same 34 bytes on every packet with a payload.
+                *size = inPacket.len - sizeof(IPXHeader);
+                memcpy((void *)p_data, (void *)&p_header[1], *size);
 #if 1
 	printf("%02d:%02d:%02d.%03d IPX<-", tick/3600000, (tick/60000) % 60, (tick/1000) % 60, tick%1000);
 	PacketPrint((void *)p_data, *size);
