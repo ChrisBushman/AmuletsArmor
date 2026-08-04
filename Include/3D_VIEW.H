@@ -130,14 +130,8 @@ T_void View3dUpdateSectorLightAnimation(T_void) ;
 #define View3dGetSectorEnterSoundRadius(sector) \
             (G_3dSectorInfoArray[sector].enterSoundRadius)
 
-#define LINE_IS_IMPASSIBLE           0x0001
-#define LINE_IS_CREATURE_IMPASSIBLE  0x0002
-#define LINE_IS_TWO_SIDED            0x0004
-#define LINE_IS_TRANSLUCENT          0x0020
-#define LINE_IS_ALWAYS_SOLID         0x0040
-#define LINE_IS_INVISIBLE            0x0080
-#define LINE_IS_AUTOMAPPED           0x0100
-#define LINE_HAS_BEEN_SEEN           0x8000
+/* LINE_IS_* / LINE_HAS_BEEN_SEEN moved to 3D_GEO.H (shared line-flag
+   semantics); still visible here via the #include "3D_GEO.H" above. */
 
 T_word16 View3dFindClosestLine(T_sword16 x, T_sword16 y) ;
 

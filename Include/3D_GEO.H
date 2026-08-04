@@ -16,6 +16,20 @@
 #include "GENERAL.H"
 #include "VIEWFILE.H"
 
+/* Map-line semantic flags (bits in T_3dLine.flags).  These describe line
+   passability/visibility and are read by both collision and rendering, so
+   they live in this shared layer rather than the renderer's header.  Moved
+   here out of 3D_VIEW.H; that header re-includes this one, so existing
+   includers still see them. */
+#define LINE_IS_IMPASSIBLE           0x0001
+#define LINE_IS_CREATURE_IMPASSIBLE  0x0002
+#define LINE_IS_TWO_SIDED            0x0004
+#define LINE_IS_TRANSLUCENT          0x0020
+#define LINE_IS_ALWAYS_SOLID         0x0040
+#define LINE_IS_INVISIBLE            0x0080
+#define LINE_IS_AUTOMAPPED           0x0100
+#define LINE_HAS_BEEN_SEEN           0x8000
+
 T_word16  IQuickSquareRoot(T_word32 value) ;
 
 T_word16  CalculateDistance(
