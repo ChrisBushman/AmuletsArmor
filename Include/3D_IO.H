@@ -76,6 +76,17 @@ extern T_resource          *G_3dMainResourceArray ;
 extern T_resource          *G_3dFloorResourceArray ;
 extern T_resource          *G_3dCeilingResourceArray ;
 
+/* Locked texture pixel pointers, externalized out of the packed on-disk
+   name fields (T_3dSide/T_3dSector *Tx[8]) so those arrays stay pure
+   8-byte names at runtime.  Parallel to the resource-handle arrays above:
+   the side arrays are sized G_Num3dSides, the sector arrays G_Num3dSectors,
+   and all five are alloc'd/freed/map-group-swapped in lockstep with them. */
+extern T_byte8            **G_3dUpperTextureArray ;
+extern T_byte8            **G_3dLowerTextureArray ;
+extern T_byte8            **G_3dMainTextureArray ;
+extern T_byte8            **G_3dFloorTextureArray ;
+extern T_byte8            **G_3dCeilingTextureArray ;
+
 /* Keep track of information about a sector */
 extern T_3dSectorInfo      *G_3dSectorInfoArray ;
 

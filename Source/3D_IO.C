@@ -68,6 +68,13 @@ T_resource          *G_3dMainResourceArray = NULL ;
 T_resource          *G_3dFloorResourceArray = NULL ;
 T_resource          *G_3dCeilingResourceArray = NULL ;
 
+/* Externalized locked texture pixel pointers (see 3D_IO.H). */
+T_byte8            **G_3dUpperTextureArray = NULL ;
+T_byte8            **G_3dLowerTextureArray = NULL ;
+T_byte8            **G_3dMainTextureArray = NULL ;
+T_byte8            **G_3dFloorTextureArray = NULL ;
+T_byte8            **G_3dCeilingTextureArray = NULL ;
+
 /* Player's location. */
 T_sword16            G_3dPlayerX ;
 T_sword16            G_3dPlayerY ;
@@ -1105,6 +1112,18 @@ static T_void ILockPictures(T_void)
     G_3dCeilingResourceArray = (T_resource *)
         MemAlloc(sizeof(T_resource) * G_Num3dSectors) ;
 
+    /* Parallel externalized texture-pointer arrays (see 3D_IO.H). */
+    G_3dUpperTextureArray = (T_byte8 **)
+        MemAlloc(sizeof(T_byte8 *) * G_Num3dSides) ;
+    G_3dLowerTextureArray = (T_byte8 **)
+        MemAlloc(sizeof(T_byte8 *) * G_Num3dSides) ;
+    G_3dMainTextureArray = (T_byte8 **)
+        MemAlloc(sizeof(T_byte8 *) * G_Num3dSides) ;
+    G_3dFloorTextureArray = (T_byte8 **)
+        MemAlloc(sizeof(T_byte8 *) * G_Num3dSectors) ;
+    G_3dCeilingTextureArray = (T_byte8 **)
+        MemAlloc(sizeof(T_byte8 *) * G_Num3dSectors) ;
+
 //#ifdef MIP_MAPPING_ON
 #if 0
     DebugCheck(G_textureHash == HASH32_BAD) ;
@@ -1348,6 +1367,12 @@ static T_void IUnlockPictures(T_void)
     MemFree(G_3dMainResourceArray) ;
     MemFree(G_3dCeilingResourceArray) ;
     MemFree(G_3dFloorResourceArray) ;
+
+    MemFree(G_3dUpperTextureArray) ;
+    MemFree(G_3dLowerTextureArray) ;
+    MemFree(G_3dMainTextureArray) ;
+    MemFree(G_3dCeilingTextureArray) ;
+    MemFree(G_3dFloorTextureArray) ;
 
     DebugEnd() ;
 }
@@ -2566,6 +2591,11 @@ typedef struct {
     T_resource *p_mainResourceArray ;
     T_resource *p_floorResourceArray ;
     T_resource *p_ceilingResourceArray ;
+    T_byte8 **p_upperTextureArray ;
+    T_byte8 **p_lowerTextureArray ;
+    T_byte8 **p_mainTextureArray ;
+    T_byte8 **p_floorTextureArray ;
+    T_byte8 **p_ceilingTextureArray ;
     T_word16 num3dObjects ;
     T_word16 num3dSegs ;
     T_word16 num3dSides ;
@@ -2639,6 +2669,11 @@ T_void View3dSetMapGroup(T_mapGroup p_mapGroup)
     G_3dLowerResourceArray = p_map->p_floorResourceArray ;
 #endif
     G_3dCeilingResourceArray = p_map->p_ceilingResourceArray ;
+    G_3dUpperTextureArray = p_map->p_upperTextureArray ;
+    G_3dLowerTextureArray = p_map->p_lowerTextureArray ;
+    G_3dMainTextureArray = p_map->p_mainTextureArray ;
+    G_3dFloorTextureArray = p_map->p_floorTextureArray ;
+    G_3dCeilingTextureArray = p_map->p_ceilingTextureArray ;
     G_Num3dObjects = p_map->num3dObjects ;
     G_Num3dSegs = p_map->num3dSegs ;
     G_Num3dLines = p_map->num3dLines ;
@@ -2685,6 +2720,11 @@ T_void View3dGetMapGroup(T_mapGroup p_mapGroup)
     p_map->p_floorResourceArray = G_3dLowerResourceArray ;
 #endif
     p_map->p_ceilingResourceArray = G_3dCeilingResourceArray ;
+    p_map->p_upperTextureArray = G_3dUpperTextureArray ;
+    p_map->p_lowerTextureArray = G_3dLowerTextureArray ;
+    p_map->p_mainTextureArray = G_3dMainTextureArray ;
+    p_map->p_floorTextureArray = G_3dFloorTextureArray ;
+    p_map->p_ceilingTextureArray = G_3dCeilingTextureArray ;
     p_map->num3dObjects = G_Num3dObjects ;
     p_map->num3dSegs = G_Num3dSegs ;
     p_map->num3dLines = G_Num3dLines ;
