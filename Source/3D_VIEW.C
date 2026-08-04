@@ -14,6 +14,7 @@
 #include <math.h>
 #define M_PI        3.14159265358979323846
 #include "3D_IO.H"
+#include "3D_GEO.H"    /* geometry/spatial-query helpers moved out of this file */
 #include "3D_TRIG.H"
 #include "ENDIAN_AA.H"
 #include "GRAPHICS.H"
@@ -5454,6 +5455,7 @@ T_void View3dFinish(T_void)
  *  @return square root calculated
  *
  *<!-----------------------------------------------------------------------*/
+#if 0 /* moved to 3D_GEO.C (step-1 extraction) */
 T_word16 IQuickSquareRoot(T_word32 value)
 {
     T_sword16 i;
@@ -5481,6 +5483,7 @@ T_word16 IQuickSquareRoot(T_word32 value)
 
     return(result);
 }
+#endif /* IQuickSquareRoot moved to 3D_GEO.C */
 
 /*-------------------------------------------------------------------------*
  * Routine:  CalculateDistance
@@ -5554,6 +5557,7 @@ T_word16 CalculateDistanceOld3(
     return((G_squareRootTable[(y1<<7)|x1])<<shift) ;
 }
 
+#if 0 /* moved to 3D_GEO.C (step-1 extraction) */
 T_word16 CalculateDistance(
              T_sword32 x1,
              T_sword32 y1,
@@ -5586,6 +5590,7 @@ T_word16 CalculateDistance(
 
     return (IQuickSquareRoot((dx*dx) + (dy*dy)) << shift) ;
 }
+#endif /* CalculateDistance moved to 3D_GEO.C */
 
 #ifndef NDEBUG
 T_word16 DebugIFindSectorNum(T_sword16 x, T_sword16 y)
@@ -5788,7 +5793,7 @@ T_word16 IFindSectorNum(T_sword16 x, T_sword16 y)
 }
 #endif
 
-#if 1
+#if 0 /* moved to 3D_GEO.C (step-1 extraction); was the active #if 1 version */
 T_word16 IFindSectorNum(T_sword16 x, T_sword16 y)
 {
     T_word16 lastLine=0xFFFF, lastSide ;   /* Last line found */
@@ -6159,6 +6164,7 @@ if (sector >= G_Num3dSectors)  {
 /**
  *
  *<!-----------------------------------------------------------------------*/
+#if 0 /* moved to 3D_GEO.C (step-1 extraction) */
 T_byte8 IOnRightOfLine(T_sword16 x, T_sword16 y, T_word16 line)
 {
     T_3dVertex *p_vertex ;
@@ -6188,6 +6194,7 @@ T_byte8 IOnRightOfLine(T_sword16 x, T_sword16 y, T_word16 line)
 
     return 2 ;
 }
+#endif /* IOnRightOfLine moved to 3D_GEO.C */
 
 T_sword32 IFindIntersectX(T_word16 line, T_sword16 y)
 {
@@ -6538,6 +6545,7 @@ T_word16 View3dGetObjectAtXY(
  *<!-----------------------------------------------------------------------*/
 extern T_byte8 G_squareRootTable[16384] ;
 
+#if 0 /* moved to 3D_GEO.C (step-1 extraction) */
 T_word16 CalculateEstimateDistance(
              T_sword16 x1,
              T_sword16 y1,
@@ -6581,6 +6589,7 @@ T_word16 CalculateEstimateDistance(
     return (deltaY + (deltaY >> 1)) ;
 */
 }
+#endif /* CalculateEstimateDistance moved to 3D_GEO.C */
 
 /*-------------------------------------------------------------------------*
  * Routine:  View3dAddObject
