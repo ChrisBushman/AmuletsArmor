@@ -238,6 +238,17 @@ T_3dObject *ServerShootProjectile(
     obj_z -= 10 ;
     obj_vz = 0 ;
 
+    /* Default to "no aimed target"; overwritten below only when
+       p_target != NULL.  obj_target MUST be defined on every path: it is
+       passed unconditionally to ServerProjectileAdd() further down, and a
+       NULL p_target is legitimate (thrown items pass NULL, and a client-
+       sync missile packet can carry a target id whose object no longer
+       exists, so ObjectFind() returns NULL -- see CSYNCPCK.C).  Leaving it
+       unset let the optimizer hoist the p_target->objServerId read above
+       the "if (p_target != NULL)" guard and crash on a NULL target.
+       ServerProjectileAdd() treats target 0 as "no target". */
+    obj_target = 0 ;
+
     if (Collide3dObjectToXYCheckLineOfSightWithZ(
                       p_objSource,
                       obj_x,
