@@ -674,8 +674,15 @@ void ResScaleInit(void)
        real-SDL-1.2 builds have no runtime vsync toggle).  It is read during
        SDL_SetVideoMode, which ResScaleSetVideoMode calls after this, so set it
        here.  overwrite=1 makes the launcher's choice authoritative.  Harmless
-       on real SDL 1.2 (PPC/O2), which ignores the variable. */
-    setenv("SDL12COMPAT_SYNC_TO_VBLANK", G_iniVsync ? "1" : "0", 1) ;
+       on real SDL 1.2 (PPC/O2), which ignores the variable.
+
+       putenv(), not setenv(): IRIX's old libc/stdlib.h doesn't declare setenv
+       (it links unresolved there), while putenv() is plain POSIX.1-2001. The
+       buffer must outlive the call (putenv may store the pointer, not a copy),
+       hence static. */
+    static char vsyncEnv[40] ;
+    sprintf(vsyncEnv, "SDL12COMPAT_SYNC_TO_VBLANK=%s", G_iniVsync ? "1" : "0") ;
+    putenv(vsyncEnv) ;
 #endif
 }
 
