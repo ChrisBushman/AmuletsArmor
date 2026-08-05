@@ -1613,20 +1613,10 @@ T_void MapSetWallTexture(T_word16 sideNum, T_byte8 *p_textureName)
 
     p_side = &G_3dSideArray[sideNum] ;
 
-#ifdef TARGET_UNIX
-    /* On Unix/64-bit, TX_PTR_FIELD writes at byte offset 0, overwriting
-     * txField[0] with pointer bytes for every slot (including empty ones).
-     * The '-' sentinel is no longer reliable after ILockPictures.
-     * Use the resource array: RESOURCE_BAD means no texture in that slot. */
-    if (G_3dMainResourceArray[sideNum] != RESOURCE_BAD)  {
-        MapSetMainTextureForSide(sideNum, p_textureName) ;
-    } else if (G_3dLowerResourceArray[sideNum] != RESOURCE_BAD)  {
-        MapSetLowerTextureForSide(sideNum, p_textureName) ;
-    } else if (G_3dUpperResourceArray[sideNum] != RESOURCE_BAD)  {
-        MapSetUpperTextureForSide(sideNum, p_textureName) ;
-    }
-#else
-    /* Try in this order:  main, lower, & upper */
+    /* Try in this order:  main, lower, & upper.  The texture pointer now
+       lives in G_3d*TextureArray rather than being stuffed over the name
+       bytes, so the '-' sentinel is intact on every target -- no TARGET_UNIX
+       resource-array fallback needed. */
     if (p_side->mainTx[0] != '-')  {
         MapSetMainTextureForSide(sideNum, p_textureName) ;
     } else if (p_side->lowerTx[0] != '-')  {
@@ -1634,7 +1624,6 @@ T_void MapSetWallTexture(T_word16 sideNum, T_byte8 *p_textureName)
     } else if (p_side->upperTx[0] != '-')  {
         MapSetUpperTextureForSide(sideNum, p_textureName) ;
     }
-#endif
 
     DebugEnd() ;
 }

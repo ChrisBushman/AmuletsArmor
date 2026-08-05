@@ -1325,40 +1325,25 @@ static T_void IUnlockPictures(T_void)
     for (i=0; i<G_Num3dSides; i++)  {
         p_side = &G_3dSideArray[i] ;
 
-#ifdef TARGET_UNIX
-        /* On Unix/64-bit TX_PTR_FIELD writes at byte 0, overwriting the '-'
-         * sentinel.  Use the resource array instead: RESOURCE_BAD = no texture. */
-        if (G_3dUpperResourceArray[i] != RESOURCE_BAD)
-            PictureUnlockAndUnfind(G_3dUpperResourceArray[i]) ;
-        if (G_3dLowerResourceArray[i] != RESOURCE_BAD)
-            PictureUnlockAndUnfind(G_3dLowerResourceArray[i]) ;
-        if (G_3dMainResourceArray[i] != RESOURCE_BAD)
-            PictureUnlockAndUnfind(G_3dMainResourceArray[i]) ;
-#else
+        /* The texture pointer now lives in G_3d*TextureArray, so the name
+           byte is no longer overwritten and the '-' sentinel is intact on
+           every target -- no TARGET_UNIX resource-array fallback needed. */
         if (p_side->upperTx[0] != '-')
             PictureUnlockAndUnfind(G_3dUpperResourceArray[i]) ;
         if (p_side->lowerTx[0] != '-')
             PictureUnlockAndUnfind(G_3dLowerResourceArray[i]) ;
         if (p_side->mainTx[0] != '-')
             PictureUnlockAndUnfind(G_3dMainResourceArray[i]) ;
-#endif
     }
 
     /* Look for all the textures on the sectors. */
     for (i=0; i<G_Num3dSectors; i++)  {
         p_sector = &G_3dSectorArray[i] ;
 
-#ifdef TARGET_UNIX
-        if (G_3dFloorResourceArray[i] != RESOURCE_BAD)
-            PictureUnlockAndUnfind(G_3dFloorResourceArray[i]) ;
-        if (G_3dCeilingResourceArray[i] != RESOURCE_BAD)
-            PictureUnlockAndUnfind(G_3dCeilingResourceArray[i]) ;
-#else
         if (p_sector->floorTx[0] != '-')
             PictureUnlockAndUnfind(G_3dFloorResourceArray[i]) ;
         if (p_sector->ceilingTx[0] != '-')
             PictureUnlockAndUnfind(G_3dCeilingResourceArray[i]) ;
-#endif
     }
 #endif
 

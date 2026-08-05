@@ -108,40 +108,24 @@ typedef struct {
     T_sectorType type ;
 } T_3dSectorInfo ;
 
-#ifdef TARGET_UNIX
-#define TX_PTR_FIELD(txField) ((T_byte8 **)(&(txField)[0]))
-#else
-#define TX_PTR_FIELD(txField) ((T_byte8 **)(&(txField)[1]))
-#endif
+/* RETIRED: the TX_PTR_FIELD / TX_PTR_GET / TX_PTR_SET hack.
 
-/* TX_PTR_FIELD reinterprets bytes inside a texture-name array (part of
-   a packed on-disk struct, T_3dSide/T_3dSector -- see below) as a
-   T_byte8* used purely at runtime to cache a locked picture pointer;
-   it's never written back to disk. Since sizeof(T_3dSide)/sizeof(
-   T_3dSector) aren't multiples of 4 (30 and 26 bytes respectively),
-   every other array element's texture fields land at a non-4-aligned
-   address, so a raw `*TX_PTR_FIELD(x) = ptr` pointer store/load faults
-   with SIGBUS on strict-alignment targets (confirmed on the SGI O2/
-   MIPS port). TX_PTR_GET/TX_PTR_SET route the pointer's bytes through
-   AlignedGetPtr/AlignedSetPtr (see ENDIAN_AA.H) instead of a direct
-   dereference.
-   This used to go through AlignedGetW32/AlignedSetW32 (fixed width,
-   32 bits) on the claim that "pointers are 4 bytes on every ABI this
-   codebase targets (Win32, Mac PPC32, MIPS N32), matching T_word32" --
-   true for all of those, but not for a modern 64-bit (LP64) macOS/
-   TARGET_UNIX build: T_uintptr_t there is a real 8-byte uintptr_t, and
-   storing one through a 32-bit-wide accessor silently truncated every
-   locked texture pointer to its low 32 bits. Confirmed the hard way:
-   this crashed wall rendering (IAddMainWall -> PictureGetXYSize) with
-   a wild pointer on the very first quest/level load on Intel macOS.
-   AlignedGetPtr/AlignedSetPtr are sized off sizeof(T_uintptr_t)
-   instead, so this is correct on both the original 32-bit targets and
-   a 64-bit one -- use these in place of `*TX_PTR_FIELD(...)`
-   everywhere. */
-#define TX_PTR_GET(txField) \
-    ((T_byte8 *)AlignedGetPtr(TX_PTR_FIELD(txField)))
-#define TX_PTR_SET(txField, val) \
-    (AlignedSetPtr(TX_PTR_FIELD(txField), (T_uintptr_t)(val)))
+   Locked texture pixel pointers used to be cached IN PLACE inside the
+   packed texture-name byte arrays of T_3dSide/T_3dSector (upperTx/lowerTx/
+   mainTx/floorTx/ceilingTx), reinterpreting those bytes as a T_byte8*.
+   Because sizeof(T_3dSide)/sizeof(T_3dSector) (30/26 bytes) aren't
+   pointer-aligned, that pointer store/load faulted with SIGBUS on strict-
+   alignment targets (SGI O2/MIPS), and on a 64-bit (LP64) build the 8-byte
+   pointer overwrote the '-' "no texture" sentinel in byte 0 -- forcing a
+   web of TARGET_UNIX #ifdef fallbacks that checked the resource array
+   instead of the name.
+
+   The pointers now live in dedicated parallel arrays owned by 3D_IO.C
+   (G_3d{Upper,Lower,Main,Floor,Ceiling}TextureArray), so these name fields
+   are pure, intact 8-byte names on every target and the whole alignment /
+   LP64-truncation / sentinel-clobbering bug class is gone.  (AlignedGetPtr/
+   AlignedSetPtr in ENDIAN_AA.H, added for this hack, are now unused here
+   but kept as general-purpose accessors.) */
 
 /** Defines for light animation types. **/
 #define SECTOR_LIGHT_ANIM_NONE      0

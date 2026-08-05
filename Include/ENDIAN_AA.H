@@ -179,21 +179,18 @@ static inline T_void AlignedSetW32(T_void *p, T_word32 v)
 #endif
 }
 
-/* Pointer-width aligned accessors -- for the VIEWFILE.H TX_PTR_GET/SET
-   trick (caching a real runtime pointer inside an on-disk texture-name
-   byte array's spare bytes; see that file's own comment for why it's
-   done this way at all). T_uintptr_t (GENERAL.H) is a real 8-byte
-   uintptr_t on a 64-bit TARGET_UNIX host and T_word32 (4 bytes)
-   everywhere else (original DOS/Win32 32-bit target) -- confirmed the
-   hard way that routing a native pointer through the 32-bit-only
-   AlignedGetW32/AlignedSetW32 (as TX_PTR_GET/SET used to, unmodified
-   since the original 32-bit-only codebase) truncates it to its low 32
-   bits on 64-bit hosts, corrupting the cached pointer into a wild
-   address the next time it's read back: this is what was actually
-   crashing wall rendering (IAddMainWall -> PictureGetXYSize) after the
-   OBJTYPE.C picture-locking bug was fixed. Sized off sizeof(T_uintptr_t)
-   rather than a fixed width so this stays correct on the original
-   32-bit target too. */
+/* Pointer-width aligned byte accessors.  Originally added for the
+   VIEWFILE.H TX_PTR_GET/SET trick (caching a runtime pointer inside a
+   packed texture-name byte array), which has since been RETIRED -- the
+   texture pointers now live in dedicated arrays in 3D_IO.C, so nothing
+   caches pointers in packed structs anymore.  These are kept as general-
+   purpose pointer-width aligned accessors: T_uintptr_t (GENERAL.H) is a
+   real 8-byte uintptr_t on a 64-bit TARGET_UNIX host and T_word32 (4
+   bytes) on the original DOS/Win32 32-bit target, and these are sized off
+   sizeof(T_uintptr_t) so they read/write a whole native pointer without
+   truncation on either -- unlike the fixed-width AlignedGetW32/SetW32
+   which silently dropped the high 32 bits of a 64-bit pointer (the bug
+   that once crashed IAddMainWall -> PictureGetXYSize). */
 static inline T_uintptr_t AlignedGetPtr(const T_void *p)
 {
     const T_byte8 *b = (const T_byte8 *)p ;

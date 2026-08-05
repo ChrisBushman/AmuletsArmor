@@ -2505,7 +2505,7 @@ ITestMinMax(1003) ;
                 G_relativeTop = G_eyeLevel - G_3dFloorHeight ;
                 G_wall.opaque = 0 ;
             } else {
-                G_wall.p_texture = *TX_PTR_FIELD(P_sideFront->lowerTx) ;
+                G_wall.p_texture = G_3dLowerTextureArray[G_frontSideNum] ;
                 DebugCheck(G_wall.p_texture != NULL) ;
 //PictureCheck(G_wall.p_texture) ;
                 G_relativeTop = G_eyeLevel -
@@ -2616,7 +2616,7 @@ ITestMinMax(1004) ;
                 G_relativeBottom = G_eyeLevel - G_3dCeilingHeight ;
                 G_wall.opaque = 0 ;
             } else {
-                G_wall.p_texture = *TX_PTR_FIELD(P_sideFront->upperTx) ;
+                G_wall.p_texture = G_3dUpperTextureArray[G_frontSideNum] ;
 //PictureCheck(G_wall.p_texture) ;
                 DebugCheck(G_wall.p_texture != NULL) ;
                 G_relativeBottom = G_eyeLevel -
