@@ -832,11 +832,15 @@ T_void MouseDraw(T_void)
             /* shows the native frame + overlay, hiding the classic-     */
             /* screen cursor.  Stamp it onto the overlay layer too       */
             /* (color 0 transparent, composited above the view).         */
+            /* This applies at EVERY level of detail, including 1: the   */
+            /* view is composited from the native frame + overlay at all */
+            /* scales, so gating this on scale>1 left the cursor hidden  */
+            /* inside the 3D viewport at detail=1 (it stayed visible in  */
+            /* the 2D menus, which don't go through the view composite).  */
             {
                 extern T_screen View3dGetOverlayScreen() ;
-                extern int HighResGetScale() ;
                 T_screen ovl = View3dGetOverlayScreen() ;
-                if ((ovl != NULL) && (HighResGetScale() > 1))  {
+                if (ovl != NULL)  {
                     GrScreenSet(ovl) ;
                     GrDrawCompressedBitmapAndClipAndColor(
                         PictureToBitmap((T_byte8 *)G_bitmap),
