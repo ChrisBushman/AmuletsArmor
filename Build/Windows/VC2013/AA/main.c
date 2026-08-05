@@ -402,6 +402,17 @@ int SDL_main(int argc, char *argv[])
         printf("BlackBox hLib = %08X\n", hLib);
     }
 #endif
+#ifdef TARGET_UNIX
+    /* macOS flicker fix (see RESSCALE.C / RESSCALE_MAC.m): RESSCALE creates a
+       borderless desktop-sized WINDOW for "fullscreen" on macOS to stay on the
+       compositor path (real fullscreen makes the display's content-adaptive
+       backlight pulse dark scenes).  sdl12-compat would, by default, promote a
+       borderless window that covers the desktop back into a real fullscreen
+       surface -- reintroducing the flicker -- so disable that promotion here.
+       Read during SDL_SetVideoMode, so set it before then; overwrite=0 lets a
+       user override from the environment.  Harmless on non-sdl12-compat SDL. */
+    setenv("SDL12COMPAT_FIX_BORDERLESS_FS_WIN", "0", 0) ;
+#endif
     if( SDL_Init(SDL_INIT_VIDEO|SDL_INIT_AUDIO) < 0)
     {
           printf ("Could not initialize SDL: %s\n",SDL_GetError());

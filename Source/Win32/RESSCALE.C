@@ -489,6 +489,27 @@ static int IOpenWindow(void)
     if (reqH < 1)
         reqH = G_logicalH;
 
+/* Only the modern macOS build (sdl12-compat over SDL2) needs this; the PPC/
+   Tiger build is also __APPLE__ but links real SDL 1.2 (AA_REAL_SDL12), where
+   true fullscreen works and doesn't flicker -- leave it alone. */
+#if defined(__APPLE__) && !defined(AA_REAL_SDL12)
+    /* macOS: a real fullscreen surface (fullscreen Space / direct scanout)
+       makes the display's content-adaptive backlight pulse the brightness of
+       dark scenes -- a whole-screen flicker no rendering setting fixes.  So
+       when fullscreen is requested we instead make a borderless *window* the
+       size of the whole desktop (created below with SDL_NOFRAME, not
+       SDL_FULLSCREEN) and cover the screen via ResScaleMacBorderlessFullscreen;
+       that keeps us on the flicker-free compositor path.  Force the window to
+       the desktop resolution here so it actually fills the display. */
+    if (G_iniFullscreen)  {
+        const SDL_VideoInfo *dvi = SDL_GetVideoInfo();
+        if ((dvi != NULL) && (dvi->current_w > 0) && (dvi->current_h > 0))  {
+            reqW = dvi->current_w;
+            reqH = dvi->current_h;
+        }
+    }
+#endif
+
     /* An explicit/computed size can simply not exist on real hardware --
        confirmed on real Windows 95 hardware: a fullscreen request at
        1280x800 (this module's own default) failed outright and fell all
@@ -577,6 +598,23 @@ static int IOpenWindow(void)
            it; check G_real->flags afterward and fall back to plain
            SWSURFACE (the always-safe option) at the same bpp if double
            buffering wasn't actually granted. */
+#if defined(__APPLE__) && !defined(AA_REAL_SDL12)
+        /* macOS (sdl12-compat): borderless windowed-fullscreen instead of real
+           fullscreen (see the note above, and RESSCALE_MAC.m).  A borderless
+           desktop-sized window stays on the compositor path -- no flicker --
+           while ResScaleMacBorderlessFullscreen() makes it cover everything.
+           SDL12COMPAT_FIX_BORDERLESS_FS_WIN=0 (set in main.c) stops
+           sdl12-compat from promoting this borderless window back into a real
+           fullscreen surface. */
+        if (G_iniFullscreen)  {
+            extern void ResScaleMacBorderlessFullscreen(void) ;
+            flags = SDL_SWSURFACE | SDL_NOFRAME ;
+            G_real = SDL_SetVideoMode(winW, winH, bppList[i], flags) ;
+            if (G_real != NULL)
+                ResScaleMacBorderlessFullscreen() ;
+        } else
+#endif
+        {
         flags = SDL_HWSURFACE | SDL_DOUBLEBUF;
         if (G_iniFullscreen)
             flags |= SDL_FULLSCREEN;
@@ -587,6 +625,7 @@ static int IOpenWindow(void)
             if (G_iniFullscreen)
                 flags |= SDL_FULLSCREEN;
             G_real = SDL_SetVideoMode(winW, winH, bppList[i], flags);
+        }
         }
 
         if (G_real != NULL)
