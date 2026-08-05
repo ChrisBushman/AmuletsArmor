@@ -725,6 +725,10 @@ static T_sword32 G_relativeFromZOld ;
 static T_byte8 *G_doublePtrLookup[MAX_VIEW3D_HEIGHT] ;
 static T_3dSide *P_sideFront ;
 static T_3dSide *P_sideBack ;
+/* Index of P_sideFront within G_3dSideArray, tracked alongside the pointer
+   so the per-wall texture-pointer lookups (G_3d{Main,Lower,Upper}TextureArray)
+   avoid a divide-by-sizeof(T_3dSide) that pointer subtraction would cost. */
+static T_word16 G_frontSideNum ;
 static T_sword16 G_deltaFloors, G_deltaCeilings;
 static T_3dSegment *P_segment ;
 static T_sword16 G_xLeft, G_xRight, G_screenXLeft, G_screenXRight ;
@@ -1798,8 +1802,8 @@ INDICATOR_LIGHT(148, INDICATOR_GREEN) ;
     G_3dFloorHeight = p_sector->floorHt ;
     G_3dCeilingHeight = p_sector->ceilingHt ;
     G_wall.shadeIndex = (p_sector->light>>2) ;
-    G_wall.textureFloor = TX_PTR_GET(p_sector->floorTx) ;
-    G_wall.textureCeiling = TX_PTR_GET(p_sector->ceilingTx) ;
+    G_wall.textureFloor = G_3dFloorTextureArray[sector] ;
+    G_wall.textureCeiling = G_3dCeilingTextureArray[sector] ;
 //PictureCheck(G_wall.textureFloor) ;
 //PictureCheck(G_wall.textureCeiling) ;
 INDICATOR_LIGHT(148, INDICATOR_RED) ;
@@ -1857,7 +1861,8 @@ ITestMinMax(1010) ;
     side = P_segment->lineSide ;
 
     p_line = &G_3dLineArray[P_segment->line] ;
-    P_sideFront = &G_3dSideArray[p_line->side[side]] ;
+    G_frontSideNum = p_line->side[side] ;
+    P_sideFront = &G_3dSideArray[G_frontSideNum] ;
     G_wall.offX = P_sideFront->tmXoffset + P_segment->lineOffset ;
     G_wall.offY = P_sideFront->tmYoffset ;
 
@@ -2409,7 +2414,7 @@ T_void IAddMainWall(T_void)
     DebugRoutine("IAddMainWall") ;
 
 ITestMinMax(1002) ;
-    G_wall.p_texture = TX_PTR_GET(P_sideFront->mainTx) ;
+    G_wall.p_texture = G_3dMainTextureArray[G_frontSideNum] ;
 //PictureCheck(G_wall.p_texture) ;
     DebugCheck(G_wall.p_texture != NULL) ;
 
@@ -2509,7 +2514,7 @@ ITestMinMax(1003) ;
             }
         } else {
 #endif
-            G_wall.p_texture = TX_PTR_GET(P_sideFront->lowerTx) ;
+            G_wall.p_texture = G_3dLowerTextureArray[G_frontSideNum] ;
 //PictureCheck(G_wall.p_texture) ;
             DebugCheck(G_wall.p_texture != NULL) ;
 //            G_relativeTop = G_eyeLevel -
@@ -2620,7 +2625,7 @@ ITestMinMax(1004) ;
             }
         } else {
 #endif
-            G_wall.p_texture = TX_PTR_GET(P_sideFront->upperTx) ;
+            G_wall.p_texture = G_3dUpperTextureArray[G_frontSideNum] ;
 //PictureCheck(G_wall.p_texture) ;
             DebugCheck(G_wall.p_texture != NULL) ;
 //            G_relativeBottom = G_eyeLevel -
@@ -4808,10 +4813,10 @@ DebugCheck(p_run->sector <= G_Num3dSectors) ;
 
     if (row >= VIEW3D_HALF_HEIGHT)  {
         /* Floor */
-        p_texture = TX_PTR_GET(p_sector->floorTx) ;
+        p_texture = G_3dFloorTextureArray[p_run->sector] ;
     } else {
         /* Ceiling */
-        p_texture = TX_PTR_GET(p_sector->ceilingTx) ;
+        p_texture = G_3dCeilingTextureArray[p_run->sector] ;
     }
 
     /* Missing textures render as transparent */
