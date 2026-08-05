@@ -82,6 +82,8 @@ static int G_iniFit         = 0;   /* 0=fit(letterbox) 1=integer 2=stretch  */
 static int G_iniWidth       = 1024;/* explicit window width  (0 = use scale)*/
 static int G_iniHeight      = 768; /* explicit window height (0 = use scale)*/
 static int G_iniFullscreen  = 1;   /* 1 = fullscreen                        */
+static int G_iniVsync       = 0;   /* 1 = sync present to vblank (macOS/Linux
+                                      via sdl12-compat; see ResScaleInit)   */
 static int G_iniAspect      = 0;   /* 1 = stretch 320x200 to 4:3 (x1.2 tall)*/
 static int G_iniHotkeys     = 1;   /* 1 = F11 cycles scale, Alt+Enter FS    */
 /* 0 = auto (try the desktop's own reported bpp first, then 32/16/8 --
@@ -224,6 +226,10 @@ static void IWriteDefaultIni(void)
         ";             lower is faster.  Applies in both windowed and\n"
         ";             fullscreen.  Separate from scale/width/height above,\n"
         ";             which only control the final window size.\n"
+        "; vsync       1 = sync the present to the monitor's refresh (removes\n"
+        ";             tearing, caps FPS to the refresh rate).  macOS/Linux\n"
+        ";             (sdl12-compat) only; ignored on the real-SDL-1.2 builds\n"
+        ";             (Windows/PPC/O2).  0 = off (default).\n"
         "\n"
         "scale=2\n"
         "fit=fit\n"
@@ -233,7 +239,8 @@ static void IWriteDefaultIni(void)
         "aspect=0\n"
         "hotkeys=1\n"
         "bpp=0\n"
-        "detail=2\n",
+        "detail=2\n"
+        "vsync=0\n",
         fp);
     fclose(fp);
 }
@@ -306,6 +313,8 @@ static void IReadIni(void)
         }
         else if (ICompareKey(key, "detail") == 0)
             G_iniDetail = IClampInt(atoi(value), 1, RESSCALE_DETAIL_MAX);
+        else if (ICompareKey(key, "vsync") == 0)
+            G_iniVsync = (atoi(value) != 0);
     }
     fclose(fp);
 }
@@ -658,6 +667,16 @@ void ResScaleInit(void)
         return;
     G_initDone = 1;
     IReadIni();
+
+#ifdef TARGET_UNIX
+    /* resolution.ini "vsync=" -> sdl12-compat's SDL12COMPAT_SYNC_TO_VBLANK
+       (macOS/Linux; the AALauncher exposes this option only there, since the
+       real-SDL-1.2 builds have no runtime vsync toggle).  It is read during
+       SDL_SetVideoMode, which ResScaleSetVideoMode calls after this, so set it
+       here.  overwrite=1 makes the launcher's choice authoritative.  Harmless
+       on real SDL 1.2 (PPC/O2), which ignores the variable. */
+    setenv("SDL12COMPAT_SYNC_TO_VBLANK", G_iniVsync ? "1" : "0", 1) ;
+#endif
 }
 
 SDL_Surface *ResScaleSetVideoMode(
