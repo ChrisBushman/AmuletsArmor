@@ -409,9 +409,14 @@ int SDL_main(int argc, char *argv[])
        backlight pulse dark scenes).  sdl12-compat would, by default, promote a
        borderless window that covers the desktop back into a real fullscreen
        surface -- reintroducing the flicker -- so disable that promotion here.
-       Read during SDL_SetVideoMode, so set it before then; overwrite=0 lets a
-       user override from the environment.  Harmless on non-sdl12-compat SDL. */
-    setenv("SDL12COMPAT_FIX_BORDERLESS_FS_WIN", "0", 0) ;
+       Read during SDL_SetVideoMode, so set it before then; the getenv guard
+       lets a user override from the environment (overwrite=0 semantics).
+       Harmless on non-sdl12-compat SDL.  putenv(), not setenv(): IRIX's old
+       libc doesn't declare setenv (it links unresolved on the O2). */
+    if (!getenv("SDL12COMPAT_FIX_BORDERLESS_FS_WIN")) {
+        static char borderlessEnv[] = "SDL12COMPAT_FIX_BORDERLESS_FS_WIN=0" ;
+        putenv(borderlessEnv) ;
+    }
 #endif
     if( SDL_Init(SDL_INIT_VIDEO|SDL_INIT_AUDIO) < 0)
     {
