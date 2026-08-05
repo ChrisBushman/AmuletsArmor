@@ -105,10 +105,24 @@ static T_doubleLinkList G_packetHistory = DOUBLE_LINK_LIST_BAD ;
 
 #define MAX_SYNC_AHEAD 3
 
+/* If a peer sends no sync packet for this long (real time via TickerGet, NOT
+   sim time), treat it as gone so the lockstep can resume instead of hanging
+   forever when a peer crashes/disconnects.  Chosen well beyond normal lag and
+   the ~2s retransmit window: within a level a silence this long means the peer
+   is really gone (level changes are coordinated via leave/next-place packets,
+   and G_playerLastHeardTime is reset in ClientSyncInitPlayersHere).  A peer
+   that is merely slow keeps sending, so this never fires for it. */
+#define SYNC_DEAD_PEER_TIMEOUT ((T_word32)(15 * TICKS_PER_SECOND))
+
 /* Keep track of what packets have been received by other players. */
 static T_doubleLinkList G_playerPacketArray[MAX_SYNC_PLAYERS] ;
 static T_byte8 G_playerLastSyncNumArray[MAX_SYNC_PLAYERS] ;
 static T_word32 G_playerPacketResyncTime[MAX_SYNC_PLAYERS] ;
+/* TickerGet() when we last received ANY packet from each peer -- the liveness
+   signal for the dead-peer timeout.  Distinct from G_playerPacketResyncTime,
+   which our own retransmit requests also reset (so it can't detect a peer that
+   has gone silent). */
+static T_word32 G_playerLastHeardTime[MAX_SYNC_PLAYERS] ;
 static T_word32 G_playerSyncClock[MAX_SYNC_PLAYERS] ;
 static E_Boolean G_playerLeft[MAX_SYNC_PLAYERS] ;
 static E_Boolean G_playerRetransmitOccuring[MAX_SYNC_PLAYERS] ;
@@ -177,6 +191,7 @@ T_void ClientSyncInit(T_void)
         G_playerLastSyncNumArray[i] = 255 ;
         G_playerPacketResyncTime[i] = 0 ;
         G_playerSyncClock[i] = 0 ;
+        G_playerLastHeardTime[i] = TickerGet() ;
     }
 
 #   ifdef COMPILE_OPTION_RECORD_CSYNC_DAT_FILE
@@ -195,6 +210,10 @@ T_void ClientSyncInitPlayersHere(T_void)
     for (i=0; i<MAX_SYNC_PLAYERS; i++)  {
         G_playerLeft[i] = FALSE ;
         G_playerRetransmitOccuring[i] = FALSE ;
+        /* Fresh game/level start: don't carry a stale silence into the new
+           level (loads can be long, especially on slow hardware), which would
+           otherwise instantly time a peer out. */
+        G_playerLastHeardTime[i] = TickerGet() ;
     }
 
     DebugEnd() ;
@@ -1581,6 +1600,9 @@ T_void ClientSyncPacketProcess(T_syncronizePacket *p_sync)
 
         DebugCheck(player < MAX_SYNC_PLAYERS) ;
         if (player < MAX_SYNC_PLAYERS)  {
+            /* Any packet from this peer (even a duplicate/out-of-order one)
+               proves it is still alive; refresh its dead-peer timeout. */
+            G_playerLastHeardTime[player] = TickerGet() ;
             syncNum = p_sync->syncNumber ;
             lastSync = G_playerLastSyncNumArray[player] ;
 
@@ -1805,6 +1827,37 @@ static E_Boolean ICheckSyncIdHistory(T_word16 nextId, T_word16 syncNum)
 }
 
 /* LES: 06/17/06  Created */
+/* Drop a peer that has gone silent past SYNC_DEAD_PEER_TIMEOUT (a crash or an
+   unclean disconnect -- a graceful quit sends PLAYER_ACTION_LEAVE_LEVEL and is
+   handled elsewhere).  Mirrors that graceful-leave cleanup exactly so the rest
+   of the code treats a timed-out peer identically to one that left: flag it
+   left (so the lockstep gate below stops waiting on it), drop the true-player
+   count, and remove/destroy its player object.  The player's server id is
+   (player + 9000) -- see ClientSyncPacketProcess.  Every live peer runs this at
+   the same frozen sim-tick (the dead peer sent nothing further to any of them),
+   so they all drop it consistently -- no desync. */
+static T_void IDropDeadPeer(T_word16 player)
+{
+    T_3dObject *p_obj ;
+
+    DebugRoutine("IDropDeadPeer") ;
+    DebugCheck(player < MAX_SYNC_PLAYERS) ;
+
+    if ((player < MAX_SYNC_PLAYERS) && (G_playerLeft[player] == FALSE))  {
+        G_numTruePlayers-- ;
+        G_playerLeft[player] = TRUE ;
+        MessagePrintf("Player %d timed out.", player) ;
+
+        p_obj = ObjectFind((T_word16)(player + 9000)) ;
+        if (p_obj != NULL)  {
+            ObjectRemove(p_obj) ;
+            ObjectDestroy(p_obj) ;
+        }
+    }
+
+    DebugEnd() ;
+}
+
 static T_void ClientSyncUpdateReceived(T_void)
 {
     T_word16 player ;
@@ -1829,8 +1882,21 @@ static T_void ClientSyncUpdateReceived(T_void)
             if ((DoubleLinkListGetNumberElements(
                     G_playerPacketArray[player]) == 0) &&
                     (G_playerLeft[player] == FALSE))  {
-                isEveryoneHere = FALSE ;
-                break ;
+                /* This peer still owes us a sync packet.  If it has been silent
+                   past the dead-peer timeout, treat it as gone so the lockstep
+                   can resume -- otherwise a crashed/disconnected peer freezes
+                   the shared world (creature AI, doors, and attack processing
+                   all run only in the gated block below) for everyone forever.
+                   A peer that is merely slow keeps sending, so its packet
+                   arrives and this never fires; the timeout only elapses for a
+                   peer sending nothing at all.  Don't break -- drop every
+                   timed-out peer this pass. */
+                if ((TickerGet() - G_playerLastHeardTime[player]) >
+                        SYNC_DEAD_PEER_TIMEOUT)  {
+                    IDropDeadPeer(player) ;
+                } else {
+                    isEveryoneHere = FALSE ;
+                }
             }
         }
 
