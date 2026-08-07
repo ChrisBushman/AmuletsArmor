@@ -10,14 +10,14 @@
 # Run on Mac OS X (needs hdiutil, ditto, and /Developer/Tools Rez/SetFile/DeRez).
 #
 # Usage: make-os9-image.sh <src-folder> <output.img> [volume-name]
-#   <src-folder>   folder holding AmuletsAndArmor + ALL game data: the .RES
+#   <src-folder>   folder holding AA (the game) + ALL game data: the .RES
 #                  archives, L*.MAP (quests won't start without them), AAMUSIC/
 #                  (music), MAPDESC/, the .FRM/level/config files, etc.
 #   <output.img>   path to write the NDIF image (.img appended if missing)
 #   [volume-name]  mounted-volume name (default "Amulets & Armor")
 #
 # The image contains one folder "AmuletsArmor" with the app + data; under OS 9
-# you double-click the .img, open the folder, and run AmuletsAndArmor. (To save
+# you double-click the .img, open the folder, and run AA. (To save
 # games you must run from a writable disk -- copy the folder to the OS 9 HD.)
 
 set -e
@@ -25,7 +25,7 @@ SRC="$1"
 OUT="${2%.img}"                 # strip .img; hdiutil convert appends it
 VOL="${3:-Amulets & Armor}"
 APPDIR="AmuletsArmor"
-APP="AmuletsAndArmor"
+APP="AA"                         # game binary name (aligned with the other platforms)
 
 [ -d "$SRC" ] && [ -n "$OUT" ] || {
     echo "usage: $0 <src-folder> <output.img> [volume-name]" >&2 ; exit 1 ; }
