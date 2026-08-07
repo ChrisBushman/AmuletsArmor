@@ -649,7 +649,24 @@ int IPXSendKeepalive(void)
  * <!-----------------------------------------------------------------------*/
 T_word32 IPXGetTicksSinceLastRecv(void)
 {
-    return TickerGet() - G_lastRecvTick;
+    T_word32 now = TickerGet();
+
+    /* Guard against the tick clock reading *lower* than when G_lastRecvTick
+       was captured. On classic Mac this happens routinely: IPXConnectToServer()
+       arms G_lastRecvTick very early (before TickerOn() has established the
+       ticker's zero point), and there the SDL-backed TickerGet() reports a
+       large value derived from the already-running SDL_GetTicks() clock. Once
+       TickerOn() zeroes G_tickMilli, the main-loop TickerGet() reads far
+       smaller, so this unsigned subtraction would underflow to ~4.29e9 and
+       DirectTalkGetLineStatus() would false-drop the session on the very first
+       tick (observed: "DROP gap=4291010099 recv=0 ka=1"). Re-arm to now and
+       report a fresh 0. Also harmlessly covers a genuine 32-bit tick wrap
+       (~708 days at 70Hz). */
+    if (now < G_lastRecvTick) {
+        G_lastRecvTick = now;
+        return 0;
+    }
+    return now - G_lastRecvTick;
 }
 
 /*--------------------------------------------------------------------------*
