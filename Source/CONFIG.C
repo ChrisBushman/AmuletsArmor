@@ -45,15 +45,26 @@ T_word32 FreeMemory(T_void) ;
  *  ConfigOpen opens up the config file for reading and changes.
  *
  *<!-----------------------------------------------------------------------*/
+/* OS 9 bring-up boot tracer (see AABuild/aa_os9_compat.c). No-op elsewhere. */
+#ifdef macintosh
+extern void AA_BootLog(const char *);
+#define AA_BOOT(m) AA_BootLog(m)
+#else
+#define AA_BOOT(m) ((void)0)
+#endif
+
 T_iniFile ConfigOpen(T_void)
 {
     DebugRoutine("ConfigOpen") ;
     DebugCheck(G_configINIFile == INIFILE_BAD) ;
 
     G_configINIFile = INIFileOpen("config.ini") ;
+    AA_BOOT("co1 INIFileOpen done");
     DebugCheck(G_configINIFile != INIFILE_BAD) ;
 
+    AA_BOOT("co2 before KeyMapInitialize");
     KeyMapInitialize(G_configINIFile) ;
+    AA_BOOT("co3 after KeyMapInitialize");
 
     DebugEnd() ;
 
@@ -102,6 +113,7 @@ T_void ConfigLoad(T_void)
 
     /* Get the amount of free memory as soon as we can. */
     memFree = FreeMemory() ;
+    AA_BOOT("cl1 freemem");
 
     if (memFree < MEMORY_SOMEWHAT_LOW_LEVEL)  {
     /* If you are low on memory, cut down the frames per player */
@@ -128,7 +140,9 @@ T_void ConfigLoad(T_void)
         puts("Ahhh ... plenty of memory to run in.") ;
         neededResolution = 0 ;
     }
+    AA_BOOT("cl2 before INIFileGet");
     p_stepdown = INIFileGet(G_configINIFile, "engine", "stepdown") ;
+    AA_BOOT("cl3 after INIFileGet");
 //printf("INI got: '%s'\n", p_stepdown) ;
     if (p_stepdown)  {
         stepdown = sscanf(p_stepdown, "%d", &stepdown) ;
@@ -142,11 +156,14 @@ stepdown = (*p_stepdown) - '0' ;
         neededResolution = stepdown ;
 
 //printf("Needed resolution: %d (%d)\n", neededResolution, stepdown) ;
+    AA_BOOT("cl4 before ObjTypesSetResolution");
     ObjTypesSetResolution(neededResolution) ;
+    AA_BOOT("cl5 after ObjTypesSetResolution");
 
     G_configLoaded = TRUE ;
 
     ConfigReadOptions(G_configINIFile);
+    AA_BOOT("cl6 after ConfigReadOptions");
 
     DebugEnd() ;
 }

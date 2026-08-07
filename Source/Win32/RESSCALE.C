@@ -177,7 +177,7 @@ static void IWriteDefaultIni(void)
 {
     FILE *fp;
 
-    fp = fopen(RESSCALE_INI_FILENAME, "w");
+    fp = fopen(RESSCALE_INI_FILENAME, "wb");
     if (fp == NULL)
         return;
 
@@ -250,7 +250,7 @@ static void IReadIni(void)
     FILE *fp;
     char  line[256];
 
-    fp = fopen(RESSCALE_INI_FILENAME, "r");
+    fp = fopen(RESSCALE_INI_FILENAME, "rb");
     if (fp == NULL)  {
         IWriteDefaultIni();
         return;
@@ -668,7 +668,7 @@ void ResScaleInit(void)
     G_initDone = 1;
     IReadIni();
 
-#ifdef TARGET_UNIX
+#if defined(TARGET_UNIX) && !defined(macintosh)
     /* resolution.ini "vsync=" -> sdl12-compat's SDL12COMPAT_SYNC_TO_VBLANK
        (macOS/Linux; the AALauncher exposes this option only there, since the
        real-SDL-1.2 builds have no runtime vsync toggle).  It is read during

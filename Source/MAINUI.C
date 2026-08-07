@@ -289,7 +289,7 @@ T_void MainUIShowBulletin (T_TxtboxID showwindowID, T_word16 number)
     TxtboxSetData (showwindowID, "");
 
     /* open bulletin file */
-    fp=fopen (filename,"r");
+    fp=fopen (filename,"rb");
 
     if (fp != NULL)
     {

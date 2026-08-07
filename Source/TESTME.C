@@ -306,6 +306,14 @@ T_void PullOut(T_void)
 }
 #endif
 
+/* OS 9 bring-up boot tracer (see AABuild/aa_os9_compat.c). No-op elsewhere. */
+#ifdef macintosh
+extern void AA_BootLog(const char *);
+#define AA_BOOT(m) AA_BootLog(m)
+#else
+#define AA_BOOT(m) ((void)0)
+#endif
+
 #ifdef WIN32
 T_void game_main(T_word16 argc, char *argv[])
 #else
@@ -345,8 +353,12 @@ extern void SleepMS(T_word32 sleepMS);
         argc = __ppArgOut ;
     }
 
+    AA_BOOT("06 PerfProfInit ok");
+    AA_BOOT("06a argv done");
     ConfigOpen() ;
+    AA_BOOT("06b ConfigOpen ok");
     ConfigLoad() ;
+    AA_BOOT("07 config ok");
 
     puts("Amulets & Armor version 1.0 -- (C) 1996 United Software Artists") ;
     puts("---------------------------------------------------------------") ;
@@ -411,10 +423,13 @@ extern void SleepMS(T_word32 sleepMS);
          NULL,
          NULL,
          handle) ;
+    AA_BOOT("08 DirectTalkInit ok");
 
     /* Initialize the game. */
     UpdateGameBegin() ;
+    AA_BOOT("09 UpdateGameBegin ok");
     DebugSaveVectorTable() ;
+    AA_BOOT("10 intro: play sound");
 
 #ifdef PULL_OUT
     PullOut() ;
@@ -434,8 +449,10 @@ extern void SleepMS(T_word32 sleepMS);
         ColorUpdate(1) ;
 //        delay(200) ;
         SoundPlayByNumber(3501, 255) ;
+        AA_BOOT("11 before COMPANY screen");
         //if (IShowScreen("UI/SCREENS/USA1", VIEW_PALETTE_MAIN_TITLE, 400, FALSE, TRUE) == FALSE)  {
         if (IShowScreen("UI/SCREENS/COMPANY", VIEW_PALETTE_STANDARD, 400, TRUE, TRUE) == FALSE)  {
+            AA_BOOT("12 COMPANY screen shown (returned FALSE)");
             ColorFadeTo(0,0,0);
             GrDrawRectangle(0, 0, SCREEN_SIZE_X-1, SCREEN_SIZE_Y-1, 0) ;
             ColorUpdate(1) ;
@@ -469,9 +486,12 @@ extern void SleepMS(T_word32 sleepMS);
     GrDrawRectangle(0, 0, SCREEN_SIZE_X-1, SCREEN_SIZE_Y-1, 0) ;
     ColorUpdate(1) ;
     ViewSetPalette(VIEW_PALETTE_STANDARD) ;
+    AA_BOOT("13 intro done, before ClientInit");
     ClientInit();
+    AA_BOOT("14 ClientInit ok");
 
     SMMainInit() ;
+    AA_BOOT("15 SMMainInit ok - entering main loop");
     while (!SMMainIsDone())  {
         if ((TickerGet() - lastTick) < CAP_TICK_RATE) {
 #ifdef WIN32

@@ -164,6 +164,14 @@ T_void OverlaySetCallback(T_overlayCallback p_callback)
  *  @param animationNumber -- Number of the animation to use
  *
  *<!-----------------------------------------------------------------------*/
+/* OS 9 bring-up boot tracer (see AABuild/aa_os9_compat.c). No-op elsewhere. */
+#ifdef macintosh
+extern void AA_BootLog(const char *);
+#define AA_BOOT(m) AA_BootLog(m)
+#else
+#define AA_BOOT(m) ((void)0)
+#endif
+
 T_void OverlaySetAnimation(T_word16 animationNumber)
 {
     static char *names[ANIMATION_NUMBER_UNKNOWN] = {
@@ -208,13 +216,17 @@ T_void OverlaySetAnimation(T_word16 animationNumber)
         E_Boolean freshLoad ;
 
         foundRes = PictureFind(filename) ;
+        AA_BOOT(foundRes == RESOURCE_BAD ? "ov1 PictureFind = RESOURCE_BAD!" : "ov1 PictureFind ok");
         freshLoad = (foundRes != RESOURCE_BAD) ? ResourceIsFreshLoad(foundRes) : FALSE ;
         G_animation = (T_overlayAnimation *)PictureLockDataQuick(foundRes) ;
+        AA_BOOT("ov2 PictureLockDataQuick done");
         G_animationResource = foundRes ;
         if (freshLoad)
             ISwapOverlayAnimation(G_animation) ;
+        AA_BOOT("ov3 swap done");
     }
     ILockAnimation(prefix) ;
+    AA_BOOT("ov4 ILockAnimation done");
     G_animationNumber = animationNumber ;
 
     DebugEnd() ;

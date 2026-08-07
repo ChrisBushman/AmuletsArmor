@@ -37,6 +37,10 @@
 #endif
 
 /* Include the SDL main definition header */
+/* AA OS9 build defines WIN32 project-wide; SDL_platform.h would translate
+   it to __WIN32__ and pull the Windows <process.h>/unistd.win32.h (execv
+   redeclare clash). This is SDL#s own Mac entry file -- it needs no WIN32. */
+#undef WIN32
 #include "SDL.h"
 #include "SDL_main.h"
 #ifdef main

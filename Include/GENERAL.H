@@ -10,8 +10,17 @@
 /** If I'm on a unix box, grab some system typedefs as well. **/
 #ifdef TARGET_UNIX
 #  include <stdio.h>
-#  include <sys/types.h>
-#  include <strings.h>
+#  if defined(macintosh)
+/* Classic Mac OS (CodeWarrior MSL) has no <sys/types.h> or <strings.h>;
+   time_t comes from <time.h>. <limits.h>/<unistd.h> are provided by MSL
+   (unistd.h via MSL_Extras). This is the TARGET_UNIX-but-not-a-real-unix
+   case: we route to SDL like the Apple/Linux builds, without the full
+   POSIX system-header set. */
+#    include <time.h>
+#  else
+#    include <sys/types.h>
+#    include <strings.h>
+#  endif
 #  include <limits.h>
 #  include <unistd.h>
 

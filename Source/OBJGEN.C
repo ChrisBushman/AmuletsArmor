@@ -121,7 +121,7 @@ T_void ObjectGeneratorLoad(T_word32 mapNumber)
     sprintf(filename, "L%ld.GEN", mapNumber) ;
 
     /* Open up the file. */
-    fp = fopen(filename, "r") ;
+    fp = fopen(filename, "rb") ;
 
     /* If the file cannot be opened, do nothing (except a warning). */
     if (fp)  {

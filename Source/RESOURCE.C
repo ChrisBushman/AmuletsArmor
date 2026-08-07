@@ -106,6 +106,17 @@ static T_void IDiscardEntries(T_resourceEntry *p_entry, T_word16 number) ;
    which compiles DebugCheck out entirely -- the corrupted lookups just
    silently returned wrong/missing pictures instead of asserting. */
 #if defined(TARGET_UNIX) || defined(__GNUC__)
+/* The per-field PACK above is __attribute__((packed)) under GCC, but EMPTY
+   under Metrowerks CodeWarrior (see GENERAL.H) -- CW has no per-field packed
+   attribute.  Without packing, CW gives this struct PPC natural alignment and
+   sizeof() becomes 44, not the 39 bytes the .RES on-disk format actually uses.
+   That corrupts BOTH the per-entry stride (i*sizeof) AND every offsetof()
+   below, so the entire index parses to garbage and every ResourceFind() fails.
+   Force byte packing with CW's scope pragma so sizeof()==39 and the field
+   offsets are correct. */
+#if defined(__MWERKS__)
+#pragma options align=packed
+#endif
 typedef struct {
     T_byte8 resID[4]            PACK;
     T_byte8 p_resourceName[14]  PACK;
@@ -117,6 +128,9 @@ typedef struct {
     T_resourceFile resourceFile PACK;
     T_word32 ownerDir32         PACK;
 } T_resourceEntryDisk32 ;
+#if defined(__MWERKS__)
+#pragma options align=reset
+#endif
 
 static T_word16 ILoadResourceIndexUnix(
                      T_file file,

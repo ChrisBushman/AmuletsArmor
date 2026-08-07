@@ -12,7 +12,17 @@
  *<!-----------------------------------------------------------------------*/
 #include <fcntl.h>
 #include <sys/stat.h>
-#include <sys/types.h>
+#if !defined(macintosh)
+#include <sys/types.h>          /* classic Mac MSL has no <sys/types.h> */
+#endif
+/* Classic Mac MSL's <sys/stat.h> uses only the POSIX S_IRWXU-style mode
+   bits, not the old BSD/DOS S_IREAD/S_IWRITE spellings AA passes to open(). */
+#ifndef S_IREAD
+#define S_IREAD  0000400
+#endif
+#ifndef S_IWRITE
+#define S_IWRITE 0000200
+#endif
 /* <io.h> is a DOS/Windows-only CRT header (_dos_findfirst, filelength,
    ...); Include/UNIXIO_SHIM.H (formerly named io.h -- renamed to stop
    it silently shadowing the real system header, the same class of bug
@@ -116,22 +126,48 @@ static T_file IFileOpenCaseInsensitive(T_byte8 *p_filename, T_word32 openMode)
 T_file FileOpen(T_byte8 *p_filename, E_fileMode mode)
 {
     T_file file ;
+    T_byte8 *p_open ;
     static T_word32 fileOpenModes[4] = {
          O_RDONLY|O_BINARY,
          O_WRONLY|O_CREAT|O_BINARY,
          O_RDWR|O_APPEND|O_CREAT|O_BINARY,
          O_RDWR|O_CREAT|O_BINARY
     } ;
+#if defined(macintosh)
+    /* Classic Mac OS uses ':' as its path separator; '/' is an ordinary
+       filename character.  The game opens loose files in subdirectories with
+       Unix-style names like "MAPDESC/DES00000", which the Mac file system
+       would otherwise try to open as one literal (nonexistent) file -- this is
+       why e.g. the guild's adventure list (MAPDESC/DES%05d) came up empty.
+       Translate to a Mac relative path ":MAPDESC:DES00000" (a leading ':'
+       means "relative to the current directory").  Root-level names with no
+       '/' are passed through unchanged. */
+    T_byte8 macPath[256] ;
+#endif
 
     DebugRoutine("FileOpen") ;
     DebugCheck(p_filename != NULL) ;
     DebugCheck(mode < FILE_MODE_UNKNOWN) ;
     DebugCheck(G_numberOpenFiles < MAX_FILES) ;
 
-    file = open(p_filename, fileOpenModes[mode], S_IREAD|S_IWRITE) ;
+    p_open = p_filename ;
+#if defined(macintosh)
+    if (strchr((char *)p_filename, '/') != NULL) {
+        T_word16 i = 0, j = 0 ;
+        macPath[j++] = ':' ;
+        while (p_filename[i] != '\0' && j < (T_word16)(sizeof(macPath) - 1)) {
+            macPath[j++] = (p_filename[i] == '/') ? ':' : p_filename[i] ;
+            i++ ;
+        }
+        macPath[j] = '\0' ;
+        p_open = macPath ;
+    }
+#endif
+
+    file = open(p_open, fileOpenModes[mode], S_IREAD|S_IWRITE) ;
 #ifdef TARGET_UNIX
     if ((file == FILE_BAD) && (mode == FILE_MODE_READ))
-        file = IFileOpenCaseInsensitive(p_filename, fileOpenModes[mode]) ;
+        file = IFileOpenCaseInsensitive(p_open, fileOpenModes[mode]) ;
 #endif
     if (file != FILE_BAD)
         G_numberOpenFiles++ ;
@@ -221,7 +257,31 @@ T_sword32 FileRead(T_file file, T_void *p_buffer, T_word32 size)
     DebugCheck(p_buffer != NULL) ;
 
     SoundUpdateOften() ;
-    result = read(file, p_buffer, size) ;
+    /* Loop to handle short reads.  POSIX read() -- and in particular the
+       classic Mac MSL implementation -- is permitted to return fewer bytes
+       than requested for a large request.  The resource system reads whole
+       index tables and data blocks in one call and assumes the full count,
+       so a short read here silently truncates the .RES index and makes every
+       ResourceFind() fail.  Keep reading until we have all bytes, hit EOF, or
+       error. */
+    {
+        T_byte8 *p_pos = (T_byte8 *)p_buffer ;
+        T_word32 remaining = size ;
+        T_sword32 n ;
+
+        result = 0 ;
+        while (remaining > 0) {
+            n = read(file, p_pos, remaining) ;
+            if (n <= 0) {
+                if (result == 0)
+                    result = n ;   /* propagate EOF(0)/error(<0) on first read */
+                break ;
+            }
+            p_pos += n ;
+            remaining -= (T_word32)n ;
+            result += n ;
+        }
+    }
     SoundUpdateOften() ;
 
     DebugEnd() ;

@@ -93,7 +93,13 @@ static void HandleUnixSignal(int sig)
        SDL_VideoQuit while the main thread was inside ResScaleUpdate/
        WindowsUpdate). _exit() terminates immediately without running that
        cleanup, which is safe from a signal handler. */
+#if defined(macintosh)
+    /* Classic Mac OS has no POSIX _exit(); this path is only reached from a
+       (non-preemptive) classic-Mac context anyway, so plain exit() is fine. */
+    exit(0);
+#else
     _exit(0);
+#endif
 }
 #endif
 
@@ -388,8 +394,17 @@ SleepMS((1000/CAP_SPEED_TO_FPS) - (tick-lastTick));
 
 extern T_void game_main(T_word16 argc, char *argv[]);
 
+/* OS 9 bring-up boot tracer (see AABuild/aa_os9_compat.c). No-op elsewhere. */
+#ifdef macintosh
+extern void AA_BootLog(const char *);
+#define AA_BOOT(m) AA_BootLog(m)
+#else
+#define AA_BOOT(m) ((void)0)
+#endif
+
 int SDL_main(int argc, char *argv[])
 {
+    AA_BOOT("01 SDL_main enter");
     char *pixels;
     int x, y;
     SDL_Color black = { 0, 0, 0, 0 };
@@ -413,10 +428,14 @@ int SDL_main(int argc, char *argv[])
        lets a user override from the environment (overwrite=0 semantics).
        Harmless on non-sdl12-compat SDL.  putenv(), not setenv(): IRIX's old
        libc doesn't declare setenv (it links unresolved on the O2). */
+#if !defined(macintosh)
+    /* sdl12-compat-only knob (no putenv on classic Mac, and real SDL 1.2
+       ignores it anyway -- see the AA_REAL_SDL12 builds). */
     if (!getenv("SDL12COMPAT_FIX_BORDERLESS_FS_WIN")) {
         static char borderlessEnv[] = "SDL12COMPAT_FIX_BORDERLESS_FS_WIN=0" ;
         putenv(borderlessEnv) ;
     }
+#endif
 #endif
     if( SDL_Init(SDL_INIT_VIDEO|SDL_INIT_AUDIO) < 0)
     {
@@ -424,6 +443,7 @@ int SDL_main(int argc, char *argv[])
           return 1;
     }
 
+    AA_BOOT("02 SDL_Init ok");
     atexit(SDL_Quit);
 
 #ifdef AA_USE_RESSCALE_PIPELINE
@@ -461,6 +481,7 @@ int SDL_main(int argc, char *argv[])
           printf("Could not set video mode: %s\n",SDL_GetError());
           return 1;
     }
+    AA_BOOT("03 video/screen ok");
 
 #ifdef AA_USE_RESSCALE_PIPELINE
     surface = SDL_CreateRGBSurface(SDL_SWSURFACE, SCREEN_WIDTH, SCREEN_HEIGHT, 8, 0, 0, 0, 0);
@@ -515,7 +536,9 @@ int SDL_main(int argc, char *argv[])
 #endif
 #endif
 
+        AA_BOOT("04 calling game_main");
         game_main(argc, argv);
+        AA_BOOT("99 game_main returned");
     }
 
     return 0;

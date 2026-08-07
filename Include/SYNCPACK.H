@@ -74,6 +74,9 @@ typedef T_byte8 T_playerAction ;
 #define PLAYER_ACTION_UNKNOWN               20
 
 /* Fully available SYNC packet.  Only data elements that change are sent. */
+#if defined(__MWERKS__)
+#pragma options align=packed
+#endif
 typedef struct {
     /* 0-255, detects when out of sync.  Always starts at 0. */
     T_byte8 syncNumber                        PACK ;
@@ -105,6 +108,9 @@ typedef struct {
     T_word16 nextObjectIdWhen                    PACK ;
 #endif
 } T_syncronizePacket ;
+#if defined(__MWERKS__)
+#pragma options align=reset
+#endif
 
 #endif
 

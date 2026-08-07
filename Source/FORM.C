@@ -464,7 +464,13 @@ T_void FormLoadFromFile(T_byte8 *filename)
     FormCleanUp();
 
     /* open up the file */
-    fp = fopen(filename, "r");
+    /* Binary, not text ("r"): classic-Mac MSL text mode mistranslates this
+       CRLF .FRM's line endings, corrupting the line-based parse below
+       (notably the ENDOFTEXT markers that trigger focusing the first editable
+       text field -- which is why character-name entry had no cursor and
+       ignored typing on OS 9, while the Unix ports were fine).  The loop
+       already strips trailing \n / \r itself, so raw bytes work everywhere. */
+    fp = fopen(filename, "rb");
     DebugCheck(fp!=NULL);
     while (feof(fp) == FALSE) {
         objtype = 0;
@@ -506,7 +512,7 @@ T_void FormLoadFromFile(T_byte8 *filename)
             TxtboxCursTop(p_obj->objID);
             MemFree(p_includedtext);
 
-//        	fp2 = fopen (tempstr2,"r");
+//        	fp2 = fopen (tempstr2,"rb");
 //	        DebugCheck (fp2!=NULL);
 //           isincludedfile=TRUE;
 

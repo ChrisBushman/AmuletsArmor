@@ -300,6 +300,14 @@ void OutputItems(void)
 }
 
 
+/* OS 9 bring-up boot tracer (see AABuild/aa_os9_compat.c). No-op elsewhere. */
+#ifdef macintosh
+extern void AA_BootLog(const char *);
+#define AA_BOOT(m) AA_BootLog(m)
+#else
+#define AA_BOOT(m) ((void)0)
+#endif
+
 T_void ClientInit(T_void)
 {
    T_cmdQActionRoutine callbacks[PACKET_COMMAND_MAX] =
@@ -317,17 +325,23 @@ T_void ClientInit(T_void)
 
     DebugRoutine("ClientInit") ;
     DebugCheck(G_clientInit == FALSE) ;
+    AA_BOOT("ci0 ClientInit entered");
 
     KeyboardDebounce() ;
+    AA_BOOT("ci0b after KeyboardDebounce");
 
     /** Register my callback routines with the command queue. **/
     CmdQRegisterClientCallbacks (callbacks);
+    AA_BOOT("ci1 callbacks registered");
 
     ClientUpdateHealth() ;
     ClientGetDelta() ;
+    AA_BOOT("ci2 health/delta ok");
     KeyboardBufferOff() ;
     ViewSetOverlayHandler(ClientHandleOverlay) ;
+    AA_BOOT("ci3 before OverlaySetAnimation");
     OverlaySetAnimation(0) ;  /* FIST */
+    AA_BOOT("ci4 overlay animation set");
     OverlaySetCallback (ClientOverlayDone); //JDA
 
     // No target yet
@@ -1611,7 +1625,7 @@ T_void ClientHandleKeyboard(E_keyboardEvent event, T_word16 scankey)
                         /* a previously stored location. */
                         if (scankey == KEY_SCAN_CODE_T) {
                             if (KeyboardGetScanCode(KEY_SCAN_CODE_ALT) == TRUE) {
-                                fp = fopen("teleport.dat", "r");
+                                fp = fopen("teleport.dat", "rb");
                                 fscanf(fp, "%d %d %u", &teleportX, &teleportY,
                                         &teleportAngle);
                                 fclose(fp);
@@ -1624,7 +1638,7 @@ T_void ClientHandleKeyboard(E_keyboardEvent event, T_word16 scankey)
                         /* a previously stored location. */
                         if (scankey == KEY_SCAN_CODE_S) {
                             if (KeyboardGetScanCode(KEY_SCAN_CODE_ALT) == TRUE) {
-                                fp = fopen("teleport.dat", "w");
+                                fp = fopen("teleport.dat", "wb");
                                 fprintf(fp, "%d %d %u", PlayerGetX16(),
                                         PlayerGetY16(), PlayerGetAngle());
                                 fclose(fp);

@@ -42,6 +42,9 @@ typedef enum
     RUNE_UNKNOWN
 } E_spellsRuneType;
 
+#if defined(__MWERKS__)
+#pragma options align=packed
+#endif
 typedef struct
 {
     /* keypad combo (ex 4,4,3,2) code to access spell */
@@ -103,6 +106,9 @@ typedef struct
 } PACK T_spellStruct;
 #else
 } T_spellStruct;
+#endif
+#if defined(__MWERKS__)
+#pragma options align=reset
 #endif
 
 #endif // _SPELTYPE_H_

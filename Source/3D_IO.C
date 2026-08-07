@@ -1396,7 +1396,7 @@ static T_void ILoadSectorInfo(T_byte8 *mapName)
 
     DebugRoutine("ILoadSectorInfo") ;
 
-    fp = fopen(mapName, "r") ;
+    fp = fopen(mapName, "rb") ;
     DebugCheck(fp != NULL) ;
 
     fgets(buffer, 80, fp) ;

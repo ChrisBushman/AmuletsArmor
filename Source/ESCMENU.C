@@ -487,7 +487,7 @@ static T_void EscMenuSaveKeys(T_void)
     }
     INIFilePut(G_iniFile, "keyboard", "keys2", buffer);
 
-    fp = fopen("control.txt", "w");
+    fp = fopen("control.txt", "wb");
     fprintf(fp, "\n^036   Amulets and Armor\n^003   Keyboard Commands\n^007\n");
     for (i = 0; i < NUMBER_KEY_PAGES * 12; i++) {
         if (G_keyboardMapping2[i][0]) {
