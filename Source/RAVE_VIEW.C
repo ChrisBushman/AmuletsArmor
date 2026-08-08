@@ -36,6 +36,7 @@
 #include "GRAPHICS.H"  /* GrGetPalette(), T_palette                          */
 #include "MEMORY.H"    /* MemAlloc()/MemFree()                               */
 #include "PICS.H"      /* PictureGetWidth()/PictureGetHeight()               */
+#include "ENDIAN_AA.H" /* EndianLE16() -- sprite raster column offsets       */
 
 /*-------------------------------------------------------------------------*
  * RAVE engine + draw context (rave-1) and their backing device/clip.
@@ -238,26 +239,112 @@ static TQATexture *IRaveUploadTexture(T_byte8 *p)
     return tex ;
 }
 
-/* Look a texture up by its pixel pointer, uploading + caching on first use. */
-static TQATexture *IRaveGetTexture(T_byte8 *p)
+/* Smallest power-of-two >= v (>=1). RAVE textures must be power-of-two; AA
+   wall/floor textures already are, but sprites are arbitrary-sized and get
+   padded up to this in a transparent POT buffer. */
+static T_word16 INextPow2(T_word16 v)
 {
-    T_word16 i ;
+    T_word16 p = 1 ;
+    while (p < v)
+        p = (T_word16)(p << 1) ;
+    return p ;
+}
 
-    if ((p == NULL) || (p == G_textureNone + 4))
+/* AA sprite/object picture-raster column entry (private on-disk format in
+   3D_VIEW.C's T_pictureRaster; redeclared here to decode sprites). A picture
+   is width entries of these, followed by the per-column pixel runs. */
+typedef struct {
+    T_word16 offset ;   /* little-endian byte offset of this column's pixels */
+    T_byte8  start ;    /* top texel row of the opaque run (255 = empty col)  */
+    T_byte8  end ;      /* bottom texel row of the opaque run                 */
+} T_raveRaster ;
+
+/* Upload an AA sprite (T_pictureRaster column-sparse, w x h logical texels)
+   into a power-of-two ARGB16 TQATexture, padded transparent. Sprite occupies
+   [0..w) x [0..h) of the POT texture; the emitter normalizes u,v by the POT
+   size. Empty columns / index-0 texels / rows outside [start..end] are
+   transparent. Returns NULL (cached) if unusable. */
+static TQATexture *IRaveUploadSprite(T_byte8 *p_picture, T_word16 w, T_word16 h)
+{
+    T_word16        potW, potH ;
+    unsigned short *buf ;
+    T_palette       pal ;
+    TQAImage        image ;
+    TQATexture     *tex = NULL ;
+    T_word16        col ;
+    const T_raveRaster *cols = (const T_raveRaster *)p_picture ;
+    TQAError        err ;
+
+    if ((p_picture == NULL) || (w == 0) || (h == 0) || (w > 1024) || (h > 1024))
         return NULL ;
 
-    for (i = 0 ; i < G_raveTexCount ; i++) {
-        if (G_raveTexCache[i].key == p)
-            return G_raveTexCache[i].tex ;   /* may be NULL == known-bad */
+    potW = INextPow2(w) ;
+    potH = INextPow2(h) ;
+
+    buf = (unsigned short *)MemAlloc((T_word32)potW * (T_word32)potH * 2UL) ;
+    if (buf == NULL)
+        return NULL ;
+    /* transparent everywhere first */
+    {
+        T_word32 n = (T_word32)potW * (T_word32)potH, k ;
+        for (k = 0 ; k < n ; k++)
+            buf[k] = 0 ;
     }
 
-    /* Grow the cache if needed (double, starting at 64). */
+    GrGetPalette(0, 256, pal) ;
+
+    /* Decode each column's opaque run into the row-major POT buffer. */
+    for (col = 0 ; col < w ; col++) {
+        T_byte8 st = cols[col].start ;
+        T_byte8 en = cols[col].end ;
+        T_byte8 *colBase ;
+        T_word16 r ;
+
+        if (st == 255)
+            continue ;                  /* empty column */
+        colBase = p_picture + EndianLE16(cols[col].offset) - st - 4 ;
+        if (en >= h)
+            en = (T_byte8)(h - 1) ;
+        for (r = st ; r <= en ; r++)
+            buf[(T_word32)r * potW + col] = IRaveArgb16(pal, colBase[r]) ;
+    }
+
+    image.width    = (long)potW ;
+    image.height   = (long)potH ;
+    image.rowBytes = (long)potW * 2 ;
+    image.pixmap   = buf ;
+
+    err = QATextureNew(G_raveEngine, kQATexture_None, kQAPixel_ARGB16,
+                       &image, &tex) ;
+    MemFree(buf) ;
+
+    if (err != kQANoErr)
+        return NULL ;
+    return tex ;
+}
+
+/* Cache lookup by key pointer; returns the entry index or 0xFFFF. */
+static T_word16 IRaveCacheFind(T_byte8 *key)
+{
+    T_word16 i ;
+    for (i = 0 ; i < G_raveTexCount ; i++) {
+        if (G_raveTexCache[i].key == key)
+            return i ;
+    }
+    return 0xFFFF ;
+}
+
+/* Add (key, tex) to the cache (growing it), caching NULL too so a known-bad
+   texture isn't retried every frame. Returns tex. */
+static TQATexture *IRaveCacheAdd(T_byte8 *key, TQATexture *tex)
+{
     if (G_raveTexCount >= G_raveTexMax) {
         T_word16        newMax = (T_word16)(G_raveTexMax ? G_raveTexMax * 2 : 64) ;
         T_raveTexEntry *grown  =
             (T_raveTexEntry *)MemAlloc((T_word32)newMax * sizeof(T_raveTexEntry)) ;
+        T_word16        i ;
         if (grown == NULL)
-            return NULL ;                /* out of memory -> skip this texture */
+            return tex ;                /* out of memory: use it, just don't cache */
         if (G_raveTexCache != NULL) {
             for (i = 0 ; i < G_raveTexCount ; i++)
                 grown[i] = G_raveTexCache[i] ;
@@ -266,10 +353,40 @@ static TQATexture *IRaveGetTexture(T_byte8 *p)
         G_raveTexCache = grown ;
         G_raveTexMax   = newMax ;
     }
+    G_raveTexCache[G_raveTexCount].key = key ;
+    G_raveTexCache[G_raveTexCount].tex = tex ;
+    G_raveTexCount++ ;
+    return tex ;
+}
 
-    G_raveTexCache[G_raveTexCount].key = p ;
-    G_raveTexCache[G_raveTexCount].tex = IRaveUploadTexture(p) ;
-    return G_raveTexCache[G_raveTexCount++].tex ;
+/* Flat wall/floor texture, uploaded + cached on first use (keyed by pointer). */
+static TQATexture *IRaveGetTexture(T_byte8 *p)
+{
+    T_word16 i ;
+
+    if ((p == NULL) || (p == G_textureNone + 4))
+        return NULL ;
+
+    i = IRaveCacheFind(p) ;
+    if (i != 0xFFFF)
+        return G_raveTexCache[i].tex ;   /* may be NULL == known-bad */
+
+    return IRaveCacheAdd(p, IRaveUploadTexture(p)) ;
+}
+
+/* Sprite picture (column-sparse), uploaded + cached on first use. */
+static TQATexture *IRaveGetSprite(T_byte8 *p_picture, T_word16 w, T_word16 h)
+{
+    T_word16 i ;
+
+    if (p_picture == NULL)
+        return NULL ;
+
+    i = IRaveCacheFind(p_picture) ;
+    if (i != 0xFFFF)
+        return G_raveTexCache[i].tex ;
+
+    return IRaveCacheAdd(p_picture, IRaveUploadSprite(p_picture, w, h)) ;
 }
 
 T_void RaveViewFlushTextures(T_void)
@@ -402,34 +519,24 @@ T_void RaveViewFrameEnd(T_void)
        whole RAVE geometry path is exercised on real hardware). */
 }
 
-/* Emit one quad (2 textured, gouraud-lit triangles). Corners: TL, BL, BR, TR.
-   u,v are texel coords -> normalized by the texture size here; light -> the
-   kd_r/g/b modulate factors (kQATextureOp_Modulate, set in rave-4). */
-T_void RaveViewEmitQuad(
-           T_byte8 *p_texture,
+/* Core: bind an already-resolved TQATexture and draw the quad (TL,BL,BR,TR)
+   as 2 textured, gouraud-lit triangles. u,v are texel coords normalized by
+   (normW,normH) -- the *texture's* real dimensions (POT), which for a padded
+   sprite differ from its logical w x h. light -> kd_r/g/b (Modulate). */
+static T_void IRaveDrawTexturedQuad(
+           TQATexture *tex, float normW, float normH,
            const T_raveVertex *topLeft,
            const T_raveVertex *bottomLeft,
            const T_raveVertex *bottomRight,
            const T_raveVertex *topRight)
 {
-    TQATexture         *tex ;
     TQAVTexture         v[4] ;
     const T_raveVertex *src[4] ;
-    float               invW32, invH ;
+    float               invNW = 1.0f / normW ;
+    float               invNH = 1.0f / normH ;
     int                 i ;
 
-    if (G_raveContext == NULL)
-        return ;
-
-    tex = IRaveGetTexture(p_texture) ;
-    if (tex == NULL)
-        return ;                        /* untextured / bad -> skip for now */
-
     QASetPtr(G_raveContext, kQATag_Texture, tex) ;
-
-    /* Normalize texel u,v to RAVE's 0..1 texture space (values >1 tile). */
-    invW32 = 1.0f / (float)PictureGetWidth(p_texture) ;
-    invH   = 1.0f / (float)PictureGetHeight(p_texture) ;
 
     src[0] = topLeft ; src[1] = bottomLeft ;
     src[2] = bottomRight ; src[3] = topRight ;
@@ -440,8 +547,8 @@ T_void RaveViewEmitQuad(
         v[i].z    = src[i]->z ;
         v[i].invW = src[i]->invW ;
         /* RAVE wants u/w, v/w; it divides by interpolated invW per pixel. */
-        v[i].uOverW = (src[i]->u * invW32) * src[i]->invW ;
-        v[i].vOverW = (src[i]->v * invH)   * src[i]->invW ;
+        v[i].uOverW = (src[i]->u * invNW) * src[i]->invW ;
+        v[i].vOverW = (src[i]->v * invNH) * src[i]->invW ;
         /* Under kQATextureOp_Modulate, r/g/b are ignored; light goes in kd_*. */
         v[i].r = v[i].g = v[i].b = 0.0f ;
         v[i].a = 1.0f ;
@@ -451,6 +558,51 @@ T_void RaveViewEmitQuad(
 
     QADrawTriTexture(G_raveContext, &v[0], &v[1], &v[2], kQATriFlags_None) ;
     QADrawTriTexture(G_raveContext, &v[0], &v[2], &v[3], kQATriFlags_None) ;
+}
+
+/* Walls + floors/ceilings: flat AA texture (pointer past its 4-byte header). */
+T_void RaveViewEmitQuad(
+           T_byte8 *p_texture,
+           const T_raveVertex *topLeft,
+           const T_raveVertex *bottomLeft,
+           const T_raveVertex *bottomRight,
+           const T_raveVertex *topRight)
+{
+    TQATexture *tex ;
+
+    if (G_raveContext == NULL)
+        return ;
+    tex = IRaveGetTexture(p_texture) ;
+    if (tex == NULL)
+        return ;                        /* untextured / bad -> skip */
+
+    IRaveDrawTexturedQuad(tex,
+        (float)PictureGetWidth(p_texture), (float)PictureGetHeight(p_texture),
+        topLeft, bottomLeft, bottomRight, topRight) ;
+}
+
+/* Sprites/objects: column-sparse picture-raster (rave-6). w,h are the sprite's
+   logical texel size; the texture is padded up to POT, so u,v (0..w / 0..h)
+   are normalized by the POT size. Alpha-test cutout (rave-4) drops the
+   transparent texels. */
+T_void RaveViewEmitSprite(
+           T_byte8 *p_picture, T_word16 w, T_word16 h,
+           const T_raveVertex *topLeft,
+           const T_raveVertex *bottomLeft,
+           const T_raveVertex *bottomRight,
+           const T_raveVertex *topRight)
+{
+    TQATexture *tex ;
+
+    if (G_raveContext == NULL)
+        return ;
+    tex = IRaveGetSprite(p_picture, w, h) ;
+    if (tex == NULL)
+        return ;
+
+    IRaveDrawTexturedQuad(tex,
+        (float)INextPow2(w), (float)INextPow2(h),
+        topLeft, bottomLeft, bottomRight, topRight) ;
 }
 
 E_Boolean RaveViewIsActive(T_void)
@@ -475,6 +627,17 @@ T_void RaveViewEmitQuad(
            const T_raveVertex *topRight)
 {
     (void)p_texture ; (void)topLeft ; (void)bottomLeft ;
+    (void)bottomRight ; (void)topRight ;
+}
+
+T_void RaveViewEmitSprite(
+           T_byte8 *p_picture, T_word16 w, T_word16 h,
+           const T_raveVertex *topLeft,
+           const T_raveVertex *bottomLeft,
+           const T_raveVertex *bottomRight,
+           const T_raveVertex *topRight)
+{
+    (void)p_picture ; (void)w ; (void)h ; (void)topLeft ; (void)bottomLeft ;
     (void)bottomRight ; (void)topRight ;
 }
 

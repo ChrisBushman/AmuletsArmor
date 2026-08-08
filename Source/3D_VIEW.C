@@ -2712,6 +2712,54 @@ ITestMinMax(1005) ;
     DebugEnd() ;
 }
 
+#if defined(macintosh) && defined(AA_RENDERER_RAVE)
+/*-------------------------------------------------------------------------*
+ * rave-5: shared helpers for emitting AA geometry (walls, floors, sprites)
+ * to the RAVE hardware backend. All three use ONE depth scale so the RAVE
+ * z-buffer sorts them against each other correctly.
+ *-------------------------------------------------------------------------*/
+
+/* Distance (world units) + base sector shade (0..63) -> brightness 0..1,
+   mirroring IDetermineShade: near surfaces get an ambient boost (capped at
+   distance 171), G_darknessAdjustment shifts all. Higher = brighter. */
+static float IRaveShadeToLight(T_sword32 distance, T_sword16 baseShade)
+{
+    T_sword32 idx ;
+    T_sword16 s = (T_sword16)(baseShade + G_darknessAdjustment) ;
+
+    if (s < 0)  s = 0 ;
+    if (s > 63) s = 63 ;
+    if (distance >= 171) {
+        idx = s ;
+    } else {
+        T_sword32 d = distance + (distance >> 1) ;   /* *1.5 */
+        idx = (256 - d) >> 3 ;
+        if (idx < 0) idx = 0 ;
+        idx += s ;
+        if (idx > 63) idx = 63 ;
+    }
+    return (float)idx / 63.0f ;
+}
+
+/* World depth (units) -> RAVE 1/w. 1/depth for every primitive keeps invW
+   (and IRaveZ below) on one consistent scale for the z-buffer. */
+static float IRaveInvW(float depth)
+{
+    if (depth < 1.0f)
+        depth = 1.0f ;
+    return 1.0f / depth ;
+}
+
+/* invW -> depth-buffer z in 0..1 (hyperbolic; near ~0, far -> 1). */
+static float IRaveZ(float invW)
+{
+    float z = 1.0f - invW * 16.0f ;
+    if (z < 0.0f) z = 0.0f ;
+    if (z > 1.0f) z = 1.0f ;
+    return z ;
+}
+#endif /* macintosh && AA_RENDERER_RAVE */
+
 /*-------------------------------------------------------------------------*
  * Routine:  IAddWall
  *-------------------------------------------------------------------------*/
@@ -2835,7 +2883,6 @@ INDICATOR_LIGHT(829, INDICATOR_RED) ;
         T_sword32    vvL = 0, vvR = 0 ;
         float        uL, uR, vTop, vBot ;
         float        invWL, invWR, zL, zR, lightL, lightR ;
-        T_sword16    shadeStart ;
 
         /* Horizontal texel column at each end -- mirrors AA's per-column v
            (lines ~2901-2908) then texel = G_wall.offX - v (unwrapped; RAVE
@@ -2859,28 +2906,18 @@ INDICATOR_LIGHT(829, INDICATOR_RED) ;
         vTop = (float)G_wall.offY ;
         vBot = (float)G_wall.offY + (float)(absoluteTop - absoluteBottom) ;
 
-        /* invW = 1/distance (AA's inverse-distance is 16.16), depth 0..1. */
-        invWL = (float)invDFromZ / 65536.0f ;
-        invWR = (float)invDToZ   / 65536.0f ;
-        zL = 1.0f - invWL * 16.0f ; if (zL < 0.0f) zL = 0.0f ; if (zL > 1.0f) zL = 1.0f ;
-        zR = 1.0f - invWR * 16.0f ; if (zR < 0.0f) zR = 0.0f ; if (zR > 1.0f) zR = 1.0f ;
+        /* Depth: invW = 1/worldDepth (relativeFromZ/ToZ are world units) --
+           the SAME 1/depth scale floors and sprites use, so the z-buffer sorts
+           all three consistently. (AA's invDFromZ is not 1/depth: it bakes in
+           a screenWidth/2 factor -- don't use it for invW.) */
+        invWL = IRaveInvW((float)relativeFromZ) ;
+        invWR = IRaveInvW((float)relativeToZ) ;
+        zL = IRaveZ(invWL) ;
+        zR = IRaveZ(invWR) ;
 
-        /* Per-end brightness: sector shade (0..63) + darkness knob + near
-           boost (mirrors IDetermineShade). */
-        shadeStart = (T_sword16)G_wall.shadeIndex + G_darknessAdjustment ;
-        if (shadeStart < 0)  shadeStart = 0 ;
-        if (shadeStart > 63) shadeStart = 63 ;
-        {
-            T_sword32 dA = relativeFromZ, dB = relativeToZ, iA, iB ;
-            if (dA >= 171) { iA = shadeStart ; }
-            else { T_sword32 d = dA + (dA >> 1) ; iA = (256 - d) >> 3 ;
-                   if (iA < 0) iA = 0 ; iA += shadeStart ; if (iA > 63) iA = 63 ; }
-            if (dB >= 171) { iB = shadeStart ; }
-            else { T_sword32 d = dB + (dB >> 1) ; iB = (256 - d) >> 3 ;
-                   if (iB < 0) iB = 0 ; iB += shadeStart ; if (iB > 63) iB = 63 ; }
-            lightL = (float)iA / 63.0f ;
-            lightR = (float)iB / 63.0f ;
-        }
+        /* Per-end brightness from the sector shade + distance. */
+        lightL = IRaveShadeToLight(relativeFromZ, (T_sword16)G_wall.shadeIndex) ;
+        lightR = IRaveShadeToLight(relativeToZ,  (T_sword16)G_wall.shadeIndex) ;
 
         /* Corners: screen X is context-relative (CLIP_LEFT origin); Y from the
            16.16 projected edges. */
@@ -4407,6 +4444,58 @@ T_void IDrawObjectAndWallRuns(T_void)
     TICKER_TIME_ROUTINE_START() ;
     INDICATOR_LIGHT(862, INDICATOR_GREEN) ;
 
+#if defined(macintosh) && defined(AA_RENDERER_RAVE)
+    /* rave-6: emit each visible object as a billboard quad. Whole-sprite rects
+       live in G_objectRun (screen extents, distance, light, dims); the sprite
+       picture is column-sparse, so RaveViewEmitSprite decodes+pads it. The
+       per-column software slice loop below is unaffected (still drawn + shown
+       until rave-7). Alpha-test cutout (rave-4) drops transparent texels. */
+    {
+        T_word16 o ;
+        for (o = 0 ; o < G_objectCount ; o++) {
+            T_3dObjectRun     *p_or  = &G_objectRun[o] ;
+            T_3dObjectRunInfo *p_ri  = &p_or->runInfo ;
+            T_3dObject        *p_obj = p_ri->p_obj ;
+            T_word16           picW ;
+            float              invW, z, light, uA, uB ;
+            float              sxL, sxR, syT, syB, vH ;
+            T_raveVertex       oTL, oBL, oBR, oTR ;
+
+            if ((p_ri->p_picture == NULL) || (p_obj == NULL))
+                continue ;
+            if (p_ri->realBottom <= p_ri->top)
+                continue ;
+            picW = ObjectGetPictureWidth(p_obj) ;
+            if ((picW == 0) || (p_ri->picHeight == 0))
+                continue ;
+
+            invW  = IRaveInvW((float)p_ri->distance) ;
+            z     = IRaveZ(invW) ;
+            light = IRaveShadeToLight(p_ri->distance, (T_sword16)(p_ri->light >> 2)) ;
+
+            /* u: 0..picW left->right, flipped for reversed sprites. */
+            if (p_obj->orientation == ORIENTATION_REVERSE) {
+                uA = (float)picW ; uB = 0.0f ;
+            } else {
+                uA = 0.0f ; uB = (float)picW ;
+            }
+            vH  = (float)p_ri->picHeight ;
+            sxL = (float)(p_or->scrLeft  - VIEW3D_CLIP_LEFT) ;
+            sxR = (float)(p_or->scrRight - VIEW3D_CLIP_LEFT) ;
+            syT = (float)p_ri->top ;
+            syB = (float)p_ri->realBottom ;  /* full sprite; z-buffer clips */
+
+            oTL.x=sxL; oTL.y=syT; oTL.z=z; oTL.invW=invW; oTL.u=uA; oTL.v=0.0f; oTL.light=light ;
+            oBL.x=sxL; oBL.y=syB; oBL.z=z; oBL.invW=invW; oBL.u=uA; oBL.v=vH;   oBL.light=light ;
+            oBR.x=sxR; oBR.y=syB; oBR.z=z; oBR.invW=invW; oBR.u=uB; oBR.v=vH;   oBR.light=light ;
+            oTR.x=sxR; oTR.y=syT; oTR.z=z; oTR.invW=invW; oTR.u=uB; oTR.v=0.0f; oTR.light=light ;
+
+            RaveViewEmitSprite(p_ri->p_picture, picW, p_ri->picHeight,
+                               &oTL, &oBL, &oBR, &oTR) ;
+        }
+    }
+#endif /* macintosh && AA_RENDERER_RAVE */
+
     for (x=0; x<VIEW3D_WIDTH; x++)  {
         /* How many wall slices are at this column? */
         j = G_numWallSlices[x] ;
@@ -4980,6 +5069,37 @@ DebugCheck(start < MAX_VIEW3D_WIDTH) ;
 
         /* Calculate the shading for distance. */
         p_shade = IDetermineShade(distance>>16, p_sector->light>>2) ;
+
+#if defined(macintosh) && defined(AA_RENDERER_RAVE)
+        /* rave-5b: emit this floor/ceiling run as a 1-row-tall textured quad.
+           x,y are world coords (16.16) at column `start`; dx,dy step world
+           coords per screen column; `distance` is the row's world depth (16.16,
+           negative for ceilings). Floor texturing is world-XY, 1 texel/unit.
+           Depth is constant across a horizontal run, so all 4 corners share
+           invW; left/right carry the run's two world positions. */
+        {
+            T_raveVertex fTL, fBL, fBR, fTR ;
+            T_sword32 span  = end - start ;
+            T_sword32 xR    = x + dx * span ;
+            T_sword32 yR    = y + dy * span ;
+            T_sword32 dAbs  = (distance < 0) ? -distance : distance ;
+            float invW  = IRaveInvW((float)dAbs / 65536.0f) ;
+            float z     = IRaveZ(invW) ;
+            float light = IRaveShadeToLight(dAbs >> 16, (T_sword16)(p_sector->light >> 2)) ;
+            float uLeft  = (float)x  / 65536.0f, vLeft  = (float)y  / 65536.0f ;
+            float uRight = (float)xR / 65536.0f, vRight = (float)yR / 65536.0f ;
+            float sxL = (float)(start - VIEW3D_CLIP_LEFT) ;
+            float sxR = (float)(end   - VIEW3D_CLIP_LEFT) ;
+            float syT = (float)row, syB = (float)(row + 1) ;
+
+            fTL.x=sxL; fTL.y=syT; fTL.z=z; fTL.invW=invW; fTL.u=uLeft;  fTL.v=vLeft;  fTL.light=light ;
+            fBL.x=sxL; fBL.y=syB; fBL.z=z; fBL.invW=invW; fBL.u=uLeft;  fBL.v=vLeft;  fBL.light=light ;
+            fBR.x=sxR; fBR.y=syB; fBR.z=z; fBR.invW=invW; fBR.u=uRight; fBR.v=vRight; fBR.light=light ;
+            fTR.x=sxR; fTR.y=syT; fTR.z=z; fTR.invW=invW; fTR.u=uRight; fTR.v=vRight; fTR.light=light ;
+
+            RaveViewEmitQuad(p_texture, &fTL, &fBL, &fBR, &fTR) ;
+        }
+#endif /* macintosh && AA_RENDERER_RAVE */
 
 #ifdef MIP_MAPPING_ON
         if ((sizeX >= 64) && (sizeY >= 64) && (sizeX != 256))  {

@@ -62,6 +62,19 @@ T_void RaveViewEmitQuad(
            const T_raveVertex *bottomRight,
            const T_raveVertex *topRight) ;
 
+/* Emit one sprite/object as a billboard quad (rave-6). p_picture is an AA
+   column-sparse object picture (T_pictureRaster format); w,h are its logical
+   texel size (padded to power-of-two internally). Same corner order as
+   RaveViewEmitQuad; transparent texels are alpha-test-dropped. */
+T_void RaveViewEmitSprite(
+           T_byte8 *p_picture,
+           T_word16 w,
+           T_word16 h,
+           const T_raveVertex *topLeft,
+           const T_raveVertex *bottomLeft,
+           const T_raveVertex *bottomRight,
+           const T_raveVertex *topRight) ;
+
 /* Drop every cached TQATexture. MUST be called whenever the level's texture
    arrays (G_3d*TextureArray in 3D_IO.C) are freed/reloaded, else the cache
    keys (pixel pointers) go stale and a reused address returns the wrong
