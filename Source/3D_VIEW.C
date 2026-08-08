@@ -837,6 +837,10 @@ T_void View3dSetActiveScale(T_word16 scale)
 
 T_byte8 *G_backdrop = NULL ;
 T_word16 G_backdropOffset = 0 ;
+/* Up/down look (pitch) offset for the backdrop/floor sampling. Defined here
+   (before View3dDrawView, which now reads it for the RAVE sky) rather than
+   mid-file; View3dSetUpDownAngle sets it. */
+T_sword32 G_alpha = 0x0000 ;
 
 typedef struct  {
     T_sword32 fromZ ;
@@ -1573,6 +1577,49 @@ INDICATOR_LIGHT(114, INDICATOR_GREEN) ;
 
     if (G_fromSector != 0xFFFF)  {
         INDICATOR_LIGHT(114, INDICATOR_RED) ;
+
+#if defined(macintosh) && defined(AA_RENDERER_RAVE)
+        /* rave-8: emit the sky backdrop as far-depth quad(s) before the walls.
+           The panorama (G_backdrop, row-major, stride VIEW3D_WIDTH<<1) scrolls
+           with view angle (G_backdropOffset) and pitches with G_alpha; backdrop
+           row 0 lands at screen row G_alpha. Split at the panorama width so the
+           horizontal wrap is exact (POT padding would break texture wrap). Far
+           depth (z~1) so walls/ceilings occlude it; it shows only where a sky
+           ceiling leaves a gap. Indoor maps have G_backdrop==NULL -> skipped. */
+        if ((G_backdrop != NULL) && (VIEW3D_WIDTH > 0)) {
+            T_sword32 bdW  = (T_sword32)VIEW3D_WIDTH << 1 ;
+            T_sword32 bdH  = VIEW3D_HALF_HEIGHT ;
+            T_sword32 off  = G_backdropOffset ;
+            float     zf   = 0.9999f, iw = 0.0001f ;
+            float     syT  = (float)G_alpha ;
+            float     syB  = (float)(G_alpha + bdH) ;
+            T_sword32 seg1 ;
+            T_raveVertex a, b, c, d ;
+
+            if (off < 0)   off = 0 ;
+            if (off > bdW) off = bdW ;
+            seg1 = bdW - off ;
+            if (seg1 > VIEW3D_WIDTH) seg1 = VIEW3D_WIDTH ;
+
+            /* segment 1: screen x [0..seg1], backdrop u [off..off+seg1] */
+            a.x=0.0f;        a.y=syT; a.z=zf; a.invW=iw; a.u=(float)off;        a.v=0.0f;       a.light=1.0f ;
+            b.x=0.0f;        b.y=syB; b.z=zf; b.invW=iw; b.u=(float)off;        b.v=(float)bdH; b.light=1.0f ;
+            c.x=(float)seg1; c.y=syB; c.z=zf; c.invW=iw; c.u=(float)(off+seg1); c.v=(float)bdH; c.light=1.0f ;
+            d.x=(float)seg1; d.y=syT; d.z=zf; d.invW=iw; d.u=(float)(off+seg1); d.v=0.0f;       d.light=1.0f ;
+            RaveViewEmitSky(G_backdrop, (T_word16)bdW, (T_word16)bdH, &a, &b, &c, &d) ;
+
+            /* segment 2 (wrapped): screen x [seg1..VIEW3D_WIDTH], u [0..rem] */
+            if (seg1 < VIEW3D_WIDTH) {
+                T_sword32 rem = (T_sword32)VIEW3D_WIDTH - seg1 ;
+                a.x=(float)seg1;         a.y=syT; a.z=zf; a.invW=iw; a.u=0.0f;       a.v=0.0f;       a.light=1.0f ;
+                b.x=(float)seg1;         b.y=syB; b.z=zf; b.invW=iw; b.u=0.0f;       b.v=(float)bdH; b.light=1.0f ;
+                c.x=(float)VIEW3D_WIDTH; c.y=syB; c.z=zf; c.invW=iw; c.u=(float)rem; c.v=(float)bdH; c.light=1.0f ;
+                d.x=(float)VIEW3D_WIDTH; d.y=syT; d.z=zf; d.invW=iw; d.u=(float)rem; d.v=0.0f;       d.light=1.0f ;
+                RaveViewEmitSky(G_backdrop, (T_word16)bdW, (T_word16)bdH, &a, &b, &c, &d) ;
+            }
+        }
+#endif /* macintosh && AA_RENDERER_RAVE */
+
         INDICATOR_LIGHT(118, INDICATOR_GREEN) ;
         /* Find all the possible objects and sort them. */
         IFindObjects() ;
@@ -3501,8 +3548,6 @@ T_byte8 *IDetermineShade(T_sword32 distance, T_word16 shadeStart)
 
     return p_shade ;
 }
-
-T_sword32 G_alpha = 0x0000 ;
 
 T_void View3dSetUpDownAngle(T_sword32 alpha)
 {

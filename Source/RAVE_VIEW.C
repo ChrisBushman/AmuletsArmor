@@ -727,6 +727,78 @@ T_void RaveViewEmitQuad(
         alpha, topLeft, bottomLeft, bottomRight, topRight) ;
 }
 
+/* Flat row-major 8-bit raster (the sky backdrop) -> POT ARGB16, fully OPAQUE
+   (index 0 is a real sky color here, not transparent). Cached by pointer. */
+static TQATexture *IRaveUploadFlat(T_byte8 *raw, T_word16 w, T_word16 h)
+{
+    T_word16        potW, potH, col, row ;
+    unsigned short *buf ;
+    T_palette       pal ;
+    TQAImage        image ;
+    TQATexture     *tex = NULL ;
+    TQAError        err ;
+
+    if ((raw == NULL) || (w == 0) || (h == 0) || (w > 2048) || (h > 1024))
+        return NULL ;
+    potW = INextPow2(w) ;
+    potH = INextPow2(h) ;
+    buf = (unsigned short *)MemAlloc((T_word32)potW * (T_word32)potH * 2UL) ;
+    if (buf == NULL)
+        return NULL ;
+    { T_word32 n = (T_word32)potW * (T_word32)potH, k ; for (k = 0 ; k < n ; k++) buf[k] = 0 ; }
+
+    GrGetPalette(0, 256, pal) ;
+    for (row = 0 ; row < h ; row++) {
+        T_byte8        *src = raw + (T_word32)row * w ;
+        unsigned short *dst = buf + (T_word32)row * potW ;
+        for (col = 0 ; col < w ; col++) {
+            T_byte8 idx = src[col] ;
+            dst[col] = (unsigned short)(0x8000 |
+                       (((pal[idx][0] & 0x3F) >> 1) << 10) |
+                       (((pal[idx][1] & 0x3F) >> 1) <<  5) |
+                        ((pal[idx][2] & 0x3F) >> 1)) ;
+        }
+    }
+    image.width = potW ; image.height = potH ; image.rowBytes = potW * 2 ; image.pixmap = buf ;
+    err = QATextureNew(G_raveEngine, kQATexture_None, kQAPixel_ARGB16, &image, &tex) ;
+    MemFree(buf) ;
+    return (err == kQANoErr) ? tex : NULL ;
+}
+
+static TQATexture *IRaveGetFlat(T_byte8 *raw, T_word16 w, T_word16 h)
+{
+    T_word16 i ;
+    if (raw == NULL)
+        return NULL ;
+    i = IRaveCacheFind(raw) ;
+    if (i != 0xFFFF)
+        return G_raveTexCache[i].tex ;
+    return IRaveCacheAdd(raw, IRaveUploadFlat(raw, w, h)) ;
+}
+
+/* rave-8: sky backdrop quad. raw is a row-major 8-bit panorama (stride w);
+   u,v are texel coords into it (normalized by POT). Opaque, drawn at far depth
+   so walls/ceilings occlude it and it shows only through sky-ceiling sectors.
+   Caller emits 1-2 of these to handle the panorama's horizontal wrap. */
+T_void RaveViewEmitSky(
+           T_byte8 *raw, T_word16 w, T_word16 h,
+           const T_raveVertex *topLeft,
+           const T_raveVertex *bottomLeft,
+           const T_raveVertex *bottomRight,
+           const T_raveVertex *topRight)
+{
+    TQATexture *tex ;
+
+    if (!RaveViewIsActive())
+        return ;
+    tex = IRaveGetFlat(raw, w, h) ;
+    if (tex == NULL)
+        return ;
+    IRaveDrawTexturedQuad(tex,
+        (float)INextPow2(w), (float)INextPow2(h), 1.0f,
+        topLeft, bottomLeft, bottomRight, topRight) ;
+}
+
 /* Sprites/objects: column-sparse picture-raster (rave-6). w,h are the sprite's
    logical texel size; the texture is padded up to POT, so u,v (0..w / 0..h)
    are normalized by the POT size. Alpha-test cutout (rave-4) drops the
@@ -831,6 +903,17 @@ T_void RaveViewEmitSprite(
            const T_raveVertex *topRight)
 {
     (void)p_picture ; (void)w ; (void)h ; (void)topLeft ; (void)bottomLeft ;
+    (void)bottomRight ; (void)topRight ;
+}
+
+T_void RaveViewEmitSky(
+           T_byte8 *raw, T_word16 w, T_word16 h,
+           const T_raveVertex *topLeft,
+           const T_raveVertex *bottomLeft,
+           const T_raveVertex *bottomRight,
+           const T_raveVertex *topRight)
+{
+    (void)raw ; (void)w ; (void)h ; (void)topLeft ; (void)bottomLeft ;
     (void)bottomRight ; (void)topRight ;
 }
 

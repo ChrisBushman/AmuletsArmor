@@ -77,6 +77,18 @@ T_void RaveViewEmitSprite(
            const T_raveVertex *bottomRight,
            const T_raveVertex *topRight) ;
 
+/* rave-8: sky backdrop quad. raw is a row-major 8-bit panorama (stride w),
+   fully opaque; u,v are texel coords into it. Emit at far depth as the sky
+   background (walls/ceilings occlude it). No-op off-RAVE. */
+T_void RaveViewEmitSky(
+           T_byte8 *raw,
+           T_word16 w,
+           T_word16 h,
+           const T_raveVertex *topLeft,
+           const T_raveVertex *bottomLeft,
+           const T_raveVertex *bottomRight,
+           const T_raveVertex *topRight) ;
+
 /* Drop every cached TQATexture. MUST be called whenever the level's texture
    arrays (G_3d*TextureArray in 3D_IO.C) are freed/reloaded, else the cache
    keys (pixel pointers) go stale and a reused address returns the wrong
