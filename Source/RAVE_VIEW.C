@@ -615,6 +615,17 @@ E_Boolean RaveViewGetFrame(T_word16 **p_base, T_word16 *p_w, T_word16 *p_h)
     return TRUE ;
 }
 
+/* rave-7 offload: TRUE when RAVE is successfully presenting, so the caller can
+   skip the software 3D raster. Read during a frame's geometry pass, G_raveFrameReady
+   still holds the PREVIOUS frame's readback result (FrameEnd sets it; FrameBegin
+   doesn't touch it) -- so we only skip software once RAVE has proven it produced
+   a composited frame, and a failed readback auto-falls-back to software next
+   frame. Never a permanent black screen. */
+E_Boolean RaveViewIsPresenting(T_void)
+{
+    return G_raveFrameReady ? TRUE : FALSE ;
+}
+
 /* Core: bind an already-resolved TQATexture and draw the quad (TL,BL,BR,TR)
    as 2 textured, gouraud-lit triangles. u,v are texel coords normalized by
    (normW,normH) -- the *texture's* real dimensions (POT), which for a padded
@@ -720,6 +731,8 @@ E_Boolean RaveViewGetFrame(T_word16 **p_base, T_word16 *p_w, T_word16 *p_h)
     (void)p_base ; (void)p_w ; (void)p_h ;
     return FALSE ;
 }
+
+E_Boolean RaveViewIsPresenting(T_void)  { return FALSE ; }
 
 T_void RaveViewEmitQuad(
            T_byte8 *p_texture,

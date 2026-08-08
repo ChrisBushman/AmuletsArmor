@@ -756,6 +756,16 @@ T_void IDrawTextureColumnNew(
            T_byte8 shift) ;
 T_sbyte8 G_darknessAdjustment ;
 
+#if defined(macintosh) && defined(AA_RENDERER_RAVE)
+/* rave-7 offload: cached once per frame in View3dDrawView from
+   RaveViewIsPresenting(). When TRUE the per-primitive software raster is
+   skipped (the RAVE view is composited over it) while the geometry emit +
+   floor/object accumulation still run. Reading a cached bool avoids a
+   per-column function call. Defined here (before View3dDrawView, which sets
+   it) so it is in scope at every use. */
+static E_Boolean G_raveSkipSoftwareRaster = FALSE ;
+#endif
+
 typedef struct {
     T_word16 left ;
     T_word16 right ;
@@ -1509,6 +1519,12 @@ T_void View3dDrawView(T_void)
     G_wallRunCount = 0 ;
     G_firstSSector = 1 ;
     G_objectCount = 0 ;
+
+#if defined(macintosh) && defined(AA_RENDERER_RAVE)
+    /* rave-7: decide once per frame whether to skip the software raster (only
+       after RAVE has confirmed it presented a frame -- see RaveViewIsPresenting). */
+    G_raveSkipSoftwareRaster = RaveViewIsPresenting() ;
+#endif
 
     /* Compute the height that the eye of the player is looking. */
 //    G_eyeLevel = PlayerGetZ16() + StatsGetTallness() ;
@@ -3260,6 +3276,13 @@ G_didDrawWall = TRUE ;
                         }
                     }
 #endif
+#if defined(macintosh) && defined(AA_RENDERER_RAVE)
+                    /* rave-7 offload: once RAVE is presenting, skip the software
+                       wall raster (the HW view composites over it). The column
+                       math + IAddVertFloor/IAddObjectSlice above already ran, so
+                       floors/objects stay correct. */
+                    if (!G_raveSkipSoftwareRaster)
+#endif
                     if (G_wall.opaque == 1)  {
                         IDrawTextureColumnNew(
                             /* Shade pointer */
@@ -4215,6 +4238,14 @@ T_void IDrawObjectColumn(T_word16 x, T_3dObjectColRun *p_run)
     E_colorizeTable table ;
 T_byte8 c ;
 
+#if defined(macintosh) && defined(AA_RENDERER_RAVE)
+    /* rave-7 offload: sprites are emitted as RAVE billboards from G_objectRun
+       (see IDrawObjectAndWallRuns); skip the software sprite raster once RAVE
+       is presenting. */
+    if (G_raveSkipSoftwareRaster)
+        return ;
+#endif
+
     /* Get a quick pointer to the common run info. */
     p_runInfo = p_run->p_runInfo ;
     DebugCheck(p_runInfo != NULL) ;
@@ -5124,6 +5155,13 @@ DebugCheck(start < MAX_VIEW3D_WIDTH) ;
         }
 #endif
     }
+
+#if defined(macintosh) && defined(AA_RENDERER_RAVE)
+    /* rave-7 offload: the floor/ceiling run was already emitted to RAVE above;
+       skip the software row raster once RAVE is presenting. */
+    if (G_raveSkipSoftwareRaster)
+        return ;
+#endif
 
     if (start < end)  {
         if ((!transparentFlag) ||

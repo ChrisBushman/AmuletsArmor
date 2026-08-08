@@ -91,6 +91,13 @@ E_Boolean RaveViewIsActive(T_void) ;
    (ResScaleRaveComposite) scales this into the on-screen VIEW3D rect. */
 E_Boolean RaveViewGetFrame(T_word16 **p_base, T_word16 *p_w, T_word16 *p_h) ;
 
+/* rave-7 offload: TRUE once RAVE is successfully presenting frames -- the
+   caller (3D_VIEW.C) then skips the software 3D raster since the HW view is
+   composited over it. FALSE until the first frame is confirmed presented, and
+   again after any failed present, so the software renderer always covers gaps
+   (never a permanent black 3D view). Always FALSE on non-RAVE builds. */
+E_Boolean RaveViewIsPresenting(T_void) ;
+
 #endif /* _RAVE_VIEW_H_ */
 
 /*-------------------------------------------------------------------------*
