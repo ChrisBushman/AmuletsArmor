@@ -13,6 +13,7 @@
 #include "3D_IO.H"
 #include "3D_TRIG.H"
 #include "3D_VIEW.H"
+#include "RAVE_VIEW.H"   /* alt HW renderer; no-ops unless AA_RENDERER_RAVE */
 #include "AREASND.H"
 #include "CLIENT.H"
 #include "COLOR.H"
@@ -89,6 +90,7 @@ T_void ViewInitialize(T_void)
 //    printf("Initializing 3D view.\n");
 
     View3dInitialize() ;
+    RaveViewInit() ;   /* bring up the RAVE HW context (no-op unless RAVE build) */
     ObjectsInitialize() ;
 
     View3dSetSize(312*VIEW3D_SCALE, 148*VIEW3D_SCALE) ;
@@ -119,6 +121,7 @@ T_void ViewFinish(T_void)
     OverlayFinish() ;
     MapFinish() ;
     OverheadFinish() ;
+    RaveViewFinish() ;   /* tear down the RAVE HW context (no-op unless RAVE build) */
     View3dFinish() ;
 
     G_viewInitialized = FALSE ;
@@ -180,8 +183,13 @@ INDICATOR_LIGHT(105, INDICATOR_GREEN) ;
     /* Update object angles to the view */
     ObjectsUpdateAnimation(0) ;
 
-    /* Draw the current 3d view. */
-    View3dDrawView() ;
+    /* Draw the current 3d view.  On a RAVE build with a live HW context, the */
+    /* RAVE backend renders (and later presents) the view instead of the      */
+    /* software rasterizer; otherwise this falls through to the software path. */
+    if (RaveViewIsActive())
+        RaveViewDrawView() ;
+    else
+        View3dDrawView() ;
 INDICATOR_LIGHT(105, INDICATOR_RED) ;
 
 INDICATOR_LIGHT(109, INDICATOR_GREEN) ;
@@ -198,8 +206,10 @@ INDICATOR_LIGHT(109, INDICATOR_GREEN) ;
             (VIEW3D_CLIP_RIGHT-VIEW3D_CLIP_LEFT)/VIEW3D_SCALE - 1,
             (VIEW3D_HEIGHT/VIEW3D_SCALE)-1) ;   /* logical overlay coords */
 
-    /* Display the screen. */
-    View3dDisplayView() ;
+    /* Display the screen.  The RAVE backend presents its own context, so skip */
+    /* the software blit when it is active.                                     */
+    if (!RaveViewIsActive())
+        View3dDisplayView() ;
 
     /* TRUE-HIGHRES: end of the view phase -- everything after this      */
     /* (banner forms, UI feedback) belongs on the classic screen.        */
