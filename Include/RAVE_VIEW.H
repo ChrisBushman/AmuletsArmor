@@ -85,6 +85,12 @@ T_void RaveViewFlushTextures(T_void) ;
    back to the software renderer). */
 E_Boolean RaveViewIsActive(T_void) ;
 
+/* rave-7: fetch the last rendered RAVE frame as a canonical RGB555 buffer
+   (bit15 unused), row-major, W*H. Returns FALSE if none is available (RAVE
+   inactive / no context / readback failed). The display compositor
+   (ResScaleRaveComposite) scales this into the on-screen VIEW3D rect. */
+E_Boolean RaveViewGetFrame(T_word16 **p_base, T_word16 *p_w, T_word16 *p_h) ;
+
 #endif /* _RAVE_VIEW_H_ */
 
 /*-------------------------------------------------------------------------*

@@ -48,6 +48,19 @@ static TQAClip          G_raveClip ;            /* rectangular clip region   */
 static RgnHandle        G_raveClipRgn = NULL ;  /* backing RgnHandle for it  */
 
 /*-------------------------------------------------------------------------*
+ * rave-7: readback frame. The context renders to the VRAM back buffer with
+ * kQATag_DontSwap (HW-accelerated, never swapped to the visible screen so it
+ * doesn't fight SDL). RaveViewFrameEnd reads that back buffer via
+ * QAAccessDrawBuffer and converts it to a canonical RGB555 buffer; ResScale's
+ * composite hook (RESSCALE.C) scales it into AA's SDL display at the VIEW3D
+ * rect, on top of the UI, just before SDL_Flip.
+ *-------------------------------------------------------------------------*/
+static T_word16 *G_raveFrameBuf   = NULL ;  /* W*H RGB555 (bit15 unused)      */
+static T_word16  G_raveFrameW     = 0 ;     /* == context width  (VIEW3D_WIDTH)*/
+static T_word16  G_raveFrameH     = 0 ;     /* == context height (VIEW3D_HEIGHT)*/
+static E_Boolean G_raveFrameReady = FALSE ; /* a frame is in G_raveFrameBuf   */
+
+/*-------------------------------------------------------------------------*
  * Texture cache (rave-2).  Keyed by the pixel pointer AA hands the software
  * renderer (G_3d*TextureArray[] entries); each maps to an uploaded
  * TQATexture.  Flushed whenever those arrays are freed (RaveViewFlushTextures,
@@ -110,17 +123,14 @@ T_void RaveViewInit(T_void)
     if (G_raveEngine == NULL)
         return ;                        /* no RAVE at all -> software path */
 
-    /* The 3D viewport, in the game's scaled buffer pixels.  VIEW3D_CLIP_LEFT/
-       RIGHT and VIEW3D_HEIGHT are the runtime, detail-scaled dimensions the
-       software renderer fills (see 3D_VIEW.C / View3dSetSize).
-       NOTE(rave-7): anchored at the device origin for now.  Final on-screen
-       placement (the ResScale window offset) and compositing with AA's
-       SDL-drawn 2D UI are settled when the present strategy lands in rave-7;
-       until then the context simply exists at the right *size* so rave-4/5
-       can create textures and issue geometry. */
-    w = (long)(VIEW3D_CLIP_RIGHT - VIEW3D_CLIP_LEFT) ;
+    /* The 3D viewport in the game's logical (detail-scaled) pixels. The context
+       is exactly the VIEW3D_WIDTH x VIEW3D_HEIGHT logical view; the taps emit
+       screen X in that same 0..VIEW3D_WIDTH space, and the composite hook maps
+       this whole buffer onto the on-screen VIEW3D rect (ResScale offset/scale).
+       Renders to an offscreen VRAM back buffer (DontSwap in rave-4) and is read
+       back for compositing -- see rave-7. */
+    w = (long)VIEW3D_WIDTH ;
     h = (long)VIEW3D_HEIGHT ;
-    if (w <= 0) w = VIEW3D_WIDTH ;
     if (w <= 0) w = 1 ;
     if (h <= 0) h = 1 ;
 
@@ -153,7 +163,14 @@ T_void RaveViewInit(T_void)
             DisposeRgn(G_raveClipRgn) ;
             G_raveClipRgn = NULL ;
         }
+        return ;
     }
+
+    /* rave-7: readback buffer matching the context size (RGB555). */
+    G_raveFrameW   = (T_word16)w ;
+    G_raveFrameH   = (T_word16)h ;
+    G_raveFrameBuf = (T_word16 *)MemAlloc((T_word32)w * (T_word32)h * 2UL) ;
+    G_raveFrameReady = FALSE ;
 }
 
 /*-------------------------------------------------------------------------*
@@ -462,6 +479,11 @@ static T_void IRaveSetRenderState(TQADrawContext *ctx)
     QASetInt(ctx, kQATag_ChannelMask,
              kQAChannelMask_r | kQAChannelMask_g |
              kQAChannelMask_b | kQAChannelMask_a) ;
+
+    /* rave-7: never swap the double buffer to the visible screen -- we composite
+       the back buffer into AA's SDL display ourselves. Without this, QARenderEnd
+       would flip the RAVE frame straight onto the screen and fight SDL. */
+    QASetInt(ctx, kQATag_DontSwap, 1) ;
 }
 
 /*-------------------------------------------------------------------------*
@@ -481,6 +503,12 @@ T_void RaveViewFinish(T_void)
         DisposeRgn(G_raveClipRgn) ;
         G_raveClipRgn = NULL ;
     }
+    if (G_raveFrameBuf != NULL) {
+        MemFree(G_raveFrameBuf) ;
+        G_raveFrameBuf = NULL ;
+    }
+    G_raveFrameW = G_raveFrameH = 0 ;
+    G_raveFrameReady = FALSE ;
     G_raveEngine = NULL ;
 }
 
@@ -506,17 +534,85 @@ T_void RaveViewFrameBegin(T_void)
 
 T_void RaveViewFrameEnd(T_void)
 {
+    TQAPixelBuffer pb ;
+    TQAError       err ;
+
     if (G_raveContext == NULL)
         return ;
 
-    QARenderEnd(G_raveContext, NULL) ;
+    QARenderEnd(G_raveContext, NULL) ;      /* DontSwap: stays in back buffer */
 
-    /* TODO(rave-7): present -- composite the RAVE context into the classic
-       screen's VIEW3D rectangle (resolving the ResScale window offset) so the
-       overhead-map + overlay + UI still layer on top, and skip the software
-       raster. Until then the RAVE frame renders offscreen and the software
-       renderer's output is what the player sees (no visual change, but the
-       whole RAVE geometry path is exercised on real hardware). */
+    /* rave-7: read the rendered back buffer and convert it to canonical RGB555
+       in G_raveFrameBuf. ResScaleRaveComposite (RESSCALE.C) then scales that
+       into AA's SDL display at the VIEW3D rect, over the UI, before SDL_Flip. */
+    G_raveFrameReady = FALSE ;
+    if (G_raveFrameBuf == NULL)
+        return ;
+
+    err = QAAccessDrawBuffer(G_raveContext, &pb) ;
+    if (err != kQANoErr)
+        return ;
+
+    {
+        T_word16 rows = G_raveFrameH, cols = G_raveFrameW ;
+        T_word16 r, c ;
+
+        if ((long)cols > pb.width)  cols = (T_word16)pb.width ;
+        if ((long)rows > pb.height) rows = (T_word16)pb.height ;
+
+        for (r = 0 ; r < rows ; r++) {
+            T_byte8  *srcRow = (T_byte8 *)pb.baseAddr + (T_word32)r * pb.rowBytes ;
+            T_word16 *dstRow = G_raveFrameBuf + (T_word32)r * G_raveFrameW ;
+
+            switch (pb.pixelType) {
+            case kQAPixel_RGB16:            /* already 5-5-5 (bit15 unused) */
+            case kQAPixel_ARGB16: {
+                const unsigned short *s = (const unsigned short *)srcRow ;
+                for (c = 0 ; c < cols ; c++)
+                    dstRow[c] = (T_word16)(s[c] & 0x7FFF) ;
+                break ; }
+            case kQAPixel_RGB16_565: {      /* 5-6-5 -> drop green LSB */
+                const unsigned short *s = (const unsigned short *)srcRow ;
+                for (c = 0 ; c < cols ; c++) {
+                    unsigned short p = s[c] ;
+                    dstRow[c] = (T_word16)((((p >> 11) & 0x1F) << 10) |
+                                           (((p >>  6) & 0x1F) <<  5) |
+                                            ( p        & 0x1F)) ;
+                }
+                break ; }
+            case kQAPixel_RGB32:            /* 8-8-8 -> top 5 bits each */
+            case kQAPixel_ARGB32: {
+                const unsigned long *s = (const unsigned long *)srcRow ;
+                for (c = 0 ; c < cols ; c++) {
+                    unsigned long p = s[c] ;
+                    dstRow[c] = (T_word16)((((p >> 19) & 0x1F) << 10) |
+                                           (((p >> 11) & 0x1F) <<  5) |
+                                            ((p >>  3) & 0x1F)) ;
+                }
+                break ; }
+            default:
+                for (c = 0 ; c < cols ; c++)
+                    dstRow[c] = 0 ;
+                break ;
+            }
+        }
+    }
+
+    QAAccessDrawBufferEnd(G_raveContext, NULL) ;
+    G_raveFrameReady = TRUE ;
+}
+
+/* rave-7: hand the composited RGB555 frame (+ its dimensions) to the display
+   compositor. Returns FALSE when no RAVE frame is available (inactive build,
+   no context, or readback failed) -- caller then shows the software frame. */
+E_Boolean RaveViewGetFrame(T_word16 **p_base, T_word16 *p_w, T_word16 *p_h)
+{
+    if (!G_raveFrameReady || (G_raveFrameBuf == NULL))
+        return FALSE ;
+    if (p_base) *p_base = G_raveFrameBuf ;
+    if (p_w)    *p_w    = G_raveFrameW ;
+    if (p_h)    *p_h    = G_raveFrameH ;
+    return TRUE ;
 }
 
 /* Core: bind an already-resolved TQATexture and draw the quad (TL,BL,BR,TR)
@@ -618,6 +714,12 @@ T_void    RaveViewFrameBegin(T_void)    {}
 T_void    RaveViewFrameEnd(T_void)      {}
 T_void    RaveViewFlushTextures(T_void) {}
 E_Boolean RaveViewIsActive(T_void)      { return FALSE ; }
+
+E_Boolean RaveViewGetFrame(T_word16 **p_base, T_word16 *p_w, T_word16 *p_h)
+{
+    (void)p_base ; (void)p_w ; (void)p_h ;
+    return FALSE ;
+}
 
 T_void RaveViewEmitQuad(
            T_byte8 *p_texture,

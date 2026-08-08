@@ -2919,15 +2919,15 @@ INDICATOR_LIGHT(829, INDICATOR_RED) ;
         lightL = IRaveShadeToLight(relativeFromZ, (T_sword16)G_wall.shadeIndex) ;
         lightR = IRaveShadeToLight(relativeToZ,  (T_sword16)G_wall.shadeIndex) ;
 
-        /* Corners: screen X is context-relative (CLIP_LEFT origin); Y from the
-           16.16 projected edges. */
-        rvTL.x = (float)(sx1 - VIEW3D_CLIP_LEFT) ; rvTL.y = (float)(scrYTopLeft    >> 16) ;
+        /* Corners: screen X in the 0..VIEW3D_WIDTH context space (matches the
+           RAVE context sized to the logical view); Y from the 16.16 edges. */
+        rvTL.x = (float)sx1 ; rvTL.y = (float)(scrYTopLeft    >> 16) ;
         rvTL.z = zL ; rvTL.invW = invWL ; rvTL.u = uL ; rvTL.v = vTop ; rvTL.light = lightL ;
-        rvBL.x = rvTL.x ;                          rvBL.y = (float)(scrYBottomLeft >> 16) ;
+        rvBL.x = (float)sx1 ; rvBL.y = (float)(scrYBottomLeft >> 16) ;
         rvBL.z = zL ; rvBL.invW = invWL ; rvBL.u = uL ; rvBL.v = vBot ; rvBL.light = lightL ;
-        rvBR.x = (float)(sx2 - VIEW3D_CLIP_LEFT) ; rvBR.y = (float)(scrYBottomRight>> 16) ;
+        rvBR.x = (float)sx2 ; rvBR.y = (float)(scrYBottomRight>> 16) ;
         rvBR.z = zR ; rvBR.invW = invWR ; rvBR.u = uR ; rvBR.v = vBot ; rvBR.light = lightR ;
-        rvTR.x = rvBR.x ;                          rvTR.y = (float)(scrYTopRight   >> 16) ;
+        rvTR.x = (float)sx2 ; rvTR.y = (float)(scrYTopRight   >> 16) ;
         rvTR.z = zR ; rvTR.invW = invWR ; rvTR.u = uR ; rvTR.v = vTop ; rvTR.light = lightR ;
 
         RaveViewEmitQuad(G_wall.p_texture, &rvTL, &rvBL, &rvBR, &rvTR) ;
@@ -4480,8 +4480,8 @@ T_void IDrawObjectAndWallRuns(T_void)
                 uA = 0.0f ; uB = (float)picW ;
             }
             vH  = (float)p_ri->picHeight ;
-            sxL = (float)(p_or->scrLeft  - VIEW3D_CLIP_LEFT) ;
-            sxR = (float)(p_or->scrRight - VIEW3D_CLIP_LEFT) ;
+            sxL = (float)p_or->scrLeft ;
+            sxR = (float)p_or->scrRight ;
             syT = (float)p_ri->top ;
             syB = (float)p_ri->realBottom ;  /* full sprite; z-buffer clips */
 
@@ -5088,8 +5088,8 @@ DebugCheck(start < MAX_VIEW3D_WIDTH) ;
             float light = IRaveShadeToLight(dAbs >> 16, (T_sword16)(p_sector->light >> 2)) ;
             float uLeft  = (float)x  / 65536.0f, vLeft  = (float)y  / 65536.0f ;
             float uRight = (float)xR / 65536.0f, vRight = (float)yR / 65536.0f ;
-            float sxL = (float)(start - VIEW3D_CLIP_LEFT) ;
-            float sxR = (float)(end   - VIEW3D_CLIP_LEFT) ;
+            float sxL = (float)start ;
+            float sxR = (float)end ;
             float syT = (float)row, syB = (float)(row + 1) ;
 
             fTL.x=sxL; fTL.y=syT; fTL.z=z; fTL.invW=invW; fTL.u=uLeft;  fTL.v=vLeft;  fTL.light=light ;

@@ -45,6 +45,11 @@
    TICKER_TIME_ROUTINE_* call sites below). */
 #include "PERFPROF.H"
 
+/* rave-7: composite the hardware (RAVE) 3D frame into the display, when the
+   RAVE renderer is active. RaveViewGetFrame is a no-op stub returning FALSE on
+   every non-RAVE build, so ResScaleRaveComposite below is inert there. */
+#include "RAVE_VIEW.H"
+
 #ifndef SDL_NOEVENT
 #define SDL_NOEVENT 0
 #endif
@@ -767,6 +772,105 @@ fallback:
 }
 
 /*--------------------------------------------------------------------------*/
+/* rave-7: composite the hardware RAVE 3D frame into the display window.     */
+/*                                                                          */
+/* Called at the end of ResScaleUpdate, after the 8-bit UI+software frame is */
+/* already stretched into G_real, just before SDL_Flip. Scales the RAVE      */
+/* RGB555 view (VIEW3D_WIDTH x VIEW3D_HEIGHT) into the on-screen VIEW3D rect */
+/* (same logical->window mapping ResScale uses; the 3D view sits at base     */
+/* 320x200 origin (4,3)) and packs pixels straight into G_real's format via  */
+/* its shifts/losses (no per-pixel SDL_MapRGB -- too slow on the G3).        */
+/* No-op on non-RAVE builds (RaveViewGetFrame returns FALSE).               */
+/*--------------------------------------------------------------------------*/
+#define RAVE_BASE_W       320       /* classic logical frame the UI maps from */
+#define RAVE_BASE_H       200
+#define RAVE_VIEW_ORIGX     4       /* VIEW3D_ORIGIN_X in base 320x200 coords */
+#define RAVE_VIEW_ORIGY     3
+
+static void ResScaleRaveComposite(void)
+{
+    T_word16       *src ;
+    T_word16        srcW = 0, srcH = 0 ;
+    SDL_PixelFormat *fmt ;
+    Uint8          *dstBase ;
+    int             dstPitch, realBytes ;
+    int             x0, y0, rw, rh, x, y ;
+    int             rLoss, gLoss, bLoss, rSh, gSh, bSh ;
+
+    if ((G_real == NULL) || (G_logicalW <= 0) || (G_logicalH <= 0))
+        return ;
+    if (!RaveViewGetFrame(&src, &srcW, &srcH))
+        return ;                       /* no RAVE frame -> software view shows */
+    if ((srcW == 0) || (srcH == 0))
+        return ;
+
+    /* On-screen VIEW3D rect in G_real window pixels. */
+    x0 = G_dstX + (int)(((long)RAVE_VIEW_ORIGX * G_dstW) / RAVE_BASE_W) ;
+    y0 = G_dstY + (int)(((long)RAVE_VIEW_ORIGY * G_dstH) / RAVE_BASE_H) ;
+    rw = (int)(((long)srcW * G_dstW) / G_logicalW) ;
+    rh = (int)(((long)srcH * G_dstH) / G_logicalH) ;
+    if ((rw <= 0) || (rh <= 0))
+        return ;
+
+    if (SDL_MUSTLOCK(G_real))  {
+        if (SDL_LockSurface(G_real) != 0)
+            return ;
+    }
+    fmt       = G_real->format ;
+    dstBase   = (Uint8 *)G_real->pixels ;
+    dstPitch  = G_real->pitch ;
+    realBytes = fmt->BytesPerPixel ;
+    rLoss = fmt->Rloss ; gLoss = fmt->Gloss ; bLoss = fmt->Bloss ;
+    rSh   = fmt->Rshift ; gSh  = fmt->Gshift ; bSh  = fmt->Bshift ;
+
+    for (y = 0 ; y < rh ; y++)  {
+        int       wy = y0 + y ;
+        int       sy = (int)(((long)y * srcH) / rh) ;   /* nearest-neighbour */
+        T_word16 *srcRow ;
+        Uint8    *dstRow ;
+
+        if ((wy < 0) || (wy >= G_real->h))
+            continue ;
+        if (sy >= srcH) sy = srcH - 1 ;
+        srcRow = src + (long)sy * srcW ;
+        dstRow = dstBase + (long)wy * dstPitch ;
+
+        for (x = 0 ; x < rw ; x++)  {
+            int      wx = x0 + x ;
+            int      sx = (int)(((long)x * srcW) / rw) ;
+            unsigned r8, g8, b8 ;
+            Uint32   col ;
+            T_word16 p ;
+
+            if ((wx < 0) || (wx >= G_real->w))
+                continue ;
+            if (sx >= srcW) sx = srcW - 1 ;
+            p  = srcRow[sx] ;
+            r8 = (unsigned)(((p >> 10) & 0x1F) << 3) ;   /* 5-bit -> 8-bit */
+            g8 = (unsigned)(((p >>  5) & 0x1F) << 3) ;
+            b8 = (unsigned)(( p        & 0x1F) << 3) ;
+            col = (Uint32)(((r8 >> rLoss) << rSh) |
+                           ((g8 >> gLoss) << gSh) |
+                           ((b8 >> bLoss) << bSh)) ;
+
+            switch (realBytes)  {
+            case 4: *((Uint32 *)(dstRow + (size_t)wx * 4)) = col ; break ;
+            case 2: *((Uint16 *)(dstRow + (size_t)wx * 2)) = (Uint16)col ; break ;
+            case 3:
+                dstRow[(size_t)wx * 3 + 0] = (Uint8)( col        & 0xFF) ;
+                dstRow[(size_t)wx * 3 + 1] = (Uint8)((col >>  8)  & 0xFF) ;
+                dstRow[(size_t)wx * 3 + 2] = (Uint8)((col >> 16)  & 0xFF) ;
+                break ;
+            default: break ;
+            }
+        }
+    }
+
+    if (SDL_MUSTLOCK(G_real))
+        SDL_UnlockSurface(G_real) ;
+}
+
+/*--------------------------------------------------------------------------*/
 /* Public: per-frame present                                                */
 /*--------------------------------------------------------------------------*/
 void ResScaleUpdate(void)
@@ -921,6 +1025,9 @@ void ResScaleUpdate(void)
     if (SDL_MUSTLOCK(G_real))
         SDL_UnlockSurface(G_real);
     PerfProfRecord(&__ppSlotCopy, "ResScaleUpdate/copy", __ppStart) ;
+
+    /* rave-7: lay the hardware 3D view over the UI just before present. */
+    ResScaleRaveComposite() ;
 
     __ppStart = PerfProfNow() ;
     SDL_Flip(G_real);
