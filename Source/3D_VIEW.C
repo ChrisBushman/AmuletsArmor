@@ -4536,25 +4536,23 @@ T_void IDrawObjectAndWallRuns(T_void)
     {
         T_word16 o ;
 
-        /* TEMP DIAGNOSTIC (remove after): dump object 0's real dims/extent and
-           a middle column's opaque range, throttled, so we can see why sprites
-           render as thin caps instead of guessing. */
+        /* TEMP DIAGNOSTIC (remove after): dump object 0's depth + the sprite z it
+           gets, its screen extent, and the sky-backdrop status, throttled -- so we
+           can compare the sprite z against the floor z (dumped in IDrawFloorRun)
+           and see whether the crop is depth-occlusion, plus confirm the backdrop
+           exists for the sky. */
         {
             static T_word16 s_diagTick = 0 ;
             if ((G_objectCount > 0) && (((s_diagTick++) % 90) == 0)) {
                 T_3dObjectRunInfo *ri = &G_objectRun[0].runInfo ;
                 if ((ri->p_obj != NULL) && (ri->p_picture != NULL)) {
-                    T_word16 pw = ObjectGetPictureWidth(ri->p_obj) ;
-                    T_pictureRaster *rt = (T_pictureRaster *)ri->p_picture ;
-                    T_word16 midc = (T_word16)(pw >> 1) ;
+                    float   iw = IRaveInvW((float)ri->distance) ;
                     T_byte8 buf[80] ;
-                    sprintf((char *)buf, "o0 pW=%d pH=%d t=%d b=%d rb=%d",
-                            pw, ri->picHeight, ri->top, ri->bottom, ri->realBottom) ;
-                    MessageAdd(buf) ;
-                    sprintf((char *)buf, "o0 mid col=%d st=%d en=%d off=%d",
-                            midc, rt[midc].start, rt[midc].end,
-                            EndianLE16(rt[midc].offset)) ;
-                    MessageAdd(buf) ;
+                    sprintf((char *)buf, "o0 dist=%d z=%d t=%d rb=%d sky=%d a=%d",
+                            (int)ri->distance, (int)(IRaveZ(iw) * 1000.0f),
+                            (int)ri->top, (int)ri->realBottom,
+                            (G_backdrop != NULL) ? 1 : 0, (int)G_alpha) ;
+                    MessageAdd((char *)buf) ;
                 }
             }
         }
@@ -4577,7 +4575,17 @@ T_void IDrawObjectAndWallRuns(T_void)
                 continue ;
 
             invW  = IRaveInvW((float)p_ri->distance) ;
-            z     = IRaveZ(invW) ;
+            /* Bias the billboard toward the camera. A sprite stands ON the floor,
+               but the floor run's depth carries the MathInvCosineLookup edge-swing
+               (IDrawFloorRun) while the sprite uses the raw perpendicular distance
+               -- so on the shared z-buffer the floor z-fights and carves the
+               sprite's lower body (the "barrel is a thin cap" bug). Sprites are
+               never behind the floor they rest on, so nudging their z nearer lets
+               them win that fight without poking through genuinely-nearer walls
+               (which differ in z by far more than this bias). */
+            z     = IRaveZ(invW) - 0.10f ;
+            if (z < 0.0f)
+                z = 0.0f ;
             light = IRaveShadeToLight(p_ri->distance, (T_sword16)(p_ri->light >> 2)) ;
 
             /* u: 0..picW left->right, flipped for reversed sprites. */
@@ -4592,15 +4600,16 @@ T_void IDrawObjectAndWallRuns(T_void)
             syT = (float)p_ri->top ;
             syB = (float)p_ri->realBottom ;  /* full sprite; z-buffer clips */
 
-            /* screen-top -> texel 0, matching the software sprite mapping
-               (AA object pictures are top-down; the upload is top-down too).
-               With flipY=0 (whole view not flipped), NO per-sprite flip: the
-               earlier flip put the flower's opaque bottom rows at the top of the
-               billboard, making flowers "float" and barrels invert. */
-            oTL.x=sxL; oTL.y=syT; oTL.z=z; oTL.invW=invW; oTL.u=uA; oTL.v=0.0f; oTL.light=light ;
-            oBL.x=sxL; oBL.y=syB; oBL.z=z; oBL.invW=invW; oBL.u=uA; oBL.v=vH;   oBL.light=light ;
-            oBR.x=sxR; oBR.y=syB; oBR.z=z; oBR.invW=invW; oBR.u=uB; oBR.v=vH;   oBR.light=light ;
-            oTR.x=sxR; oTR.y=syT; oTR.z=z; oTR.invW=invW; oTR.u=uB; oTR.v=0.0f; oTR.light=light ;
+            /* V: large-v at the screen-TOP corner, 0 at the bottom -- the SAME
+               convention the walls use (IAddWall: vTop on the top corners), which
+               render upright. RAVE's texture sampling is bottom-up, so the earlier
+               "v=0 at top" put the sprite in upside-down (the reported inversion).
+               v only spans [0..picHeight], so the POT padding above picHeight is
+               never sampled. */
+            oTL.x=sxL; oTL.y=syT; oTL.z=z; oTL.invW=invW; oTL.u=uA; oTL.v=vH;   oTL.light=light ;
+            oBL.x=sxL; oBL.y=syB; oBL.z=z; oBL.invW=invW; oBL.u=uA; oBL.v=0.0f; oBL.light=light ;
+            oBR.x=sxR; oBR.y=syB; oBR.z=z; oBR.invW=invW; oBR.u=uB; oBR.v=0.0f; oBR.light=light ;
+            oTR.x=sxR; oTR.y=syT; oTR.z=z; oTR.invW=invW; oTR.u=uB; oTR.v=vH;   oTR.light=light ;
 
             RaveViewEmitSprite(p_ri->p_picture, picW, p_ri->picHeight,
                                &oTL, &oBL, &oBR, &oTR) ;

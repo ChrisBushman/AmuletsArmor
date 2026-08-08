@@ -37,6 +37,8 @@
 #include "MEMORY.H"    /* MemAlloc()/MemFree()                               */
 #include "PICS.H"      /* PictureGetWidth()/PictureGetHeight()               */
 #include "ENDIAN_AA.H" /* EndianLE16() -- sprite raster column offsets       */
+#include "MESSAGE.H"   /* MessageAdd() -- TEMP sky-upload diagnostic         */
+#include <stdio.h>     /* sprintf()    -- TEMP sky-upload diagnostic         */
 
 /*-------------------------------------------------------------------------*
  * RAVE engine + draw context (rave-1) and their backing device/clip.
@@ -792,8 +794,19 @@ T_void RaveViewEmitSky(
     if (!RaveViewIsActive())
         return ;
     tex = IRaveGetFlat(raw, w, h) ;
-    if (tex == NULL)
+    if (tex == NULL) {
+        /* TEMP DIAGNOSTIC (remove after): the backdrop POTs up to 1024 wide;
+           if the engine rejects that texture size the sky is silently black.
+           Throttled report so we can see whether that's why. */
+        static T_word16 s_skyTick = 0 ;
+        if (((s_skyTick++) % 120) == 0) {
+            T_byte8 b[64] ;
+            sprintf((char *)b, "SKY tex NULL w=%d h=%d pot=%dx%d",
+                    (int)w, (int)h, (int)INextPow2(w), (int)INextPow2(h)) ;
+            MessageAdd((char *)b) ;
+        }
         return ;
+    }
     IRaveDrawTexturedQuad(tex,
         (float)INextPow2(w), (float)INextPow2(h), 1.0f,
         topLeft, bottomLeft, bottomRight, topRight) ;
