@@ -11,7 +11,8 @@
 #include "3D_COLLI.H"
 #include "3D_IO.H"
 #include "3D_TRIG.H"
-#include "3D_VIEW.H"
+#include "3D_GEO.H"     /* geometry/spatial queries + line flags; collision no
+                           longer depends on the renderer header (3D_VIEW.H) */
 #include "GENERAL.H"
 #include "MAP.H"
 #include "OBJECT.H"
@@ -1735,8 +1736,6 @@ E_Boolean CheckLineCanStepThrough(T_word16 i, T_3dObject *p_obj)
 
     return canStep ;
 }
-
-extern T_byte8 IOnRightOfLine(T_sword16 x, T_sword16 y, T_word16 line) ;
 
 /*-------------------------------------------------------------------------*
  * Routine:  IMoveToXYWithStep

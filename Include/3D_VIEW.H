@@ -8,6 +8,8 @@
 #include "GENERAL.H"
 #include "VIEWFILE.H"
 #include "GRAPHICS.H"   /* TRUE-HIGHRES: T_screen */
+#include "3D_GEO.H"     /* CalculateDistance/EstimateDistance, IFindSectorNum,
+                           IOnRightOfLine + View3dFindSectorNum, moved out here */
 
 /*
 #define VIEW3D_WIDTH 300
@@ -87,21 +89,9 @@ T_void View3dDrawView(T_void) ;
 
 T_void View3dDisplayView(T_void) ;
 
-T_word16 CalculateDistance(
-             T_sword32 x1,
-             T_sword32 y1,
-             T_sword32 x2,
-             T_sword32 y2) ;
-
-T_word16 CalculateEstimateDistance(
-             T_sword16 x1,
-             T_sword16 y1,
-             T_sword16 x2,
-             T_sword16 y2) ;
-
-#define View3dFindSectorNum(x, y) IFindSectorNum(x, y)
-
-T_word16 IFindSectorNum(T_sword16 x, T_sword16 y) ;
+/* CalculateDistance, CalculateEstimateDistance, IFindSectorNum,
+   IOnRightOfLine and the View3dFindSectorNum macro now live in 3D_GEO.H
+   (included above), shared by the renderer and collision. */
 
 T_void View3dSetSize(T_word16 width, T_word16 height) ;
 
@@ -140,14 +130,8 @@ T_void View3dUpdateSectorLightAnimation(T_void) ;
 #define View3dGetSectorEnterSoundRadius(sector) \
             (G_3dSectorInfoArray[sector].enterSoundRadius)
 
-#define LINE_IS_IMPASSIBLE           0x0001
-#define LINE_IS_CREATURE_IMPASSIBLE  0x0002
-#define LINE_IS_TWO_SIDED            0x0004
-#define LINE_IS_TRANSLUCENT          0x0020
-#define LINE_IS_ALWAYS_SOLID         0x0040
-#define LINE_IS_INVISIBLE            0x0080
-#define LINE_IS_AUTOMAPPED           0x0100
-#define LINE_HAS_BEEN_SEEN           0x8000
+/* LINE_IS_* / LINE_HAS_BEEN_SEEN moved to 3D_GEO.H (shared line-flag
+   semantics); still visible here via the #include "3D_GEO.H" above. */
 
 T_word16 View3dFindClosestLine(T_sword16 x, T_sword16 y) ;
 

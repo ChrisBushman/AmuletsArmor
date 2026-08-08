@@ -1502,8 +1502,8 @@ T_void MapSetMainTextureForSide(T_word16 sideNum, T_byte8 *p_textureName)
     p_side->mainTx[0] = textureName[0] ;
 
     if ((textureName[0] != '\0') && (textureName[0] != '-'))
-        TX_PTR_SET(p_side->mainTx,
-            PictureLock(textureName, &G_3dMainResourceArray[sideNum])) ;
+        G_3dMainTextureArray[sideNum] =
+            PictureLock(textureName, &G_3dMainResourceArray[sideNum]) ;
     else {
         G_3dMainResourceArray[sideNum] = RESOURCE_BAD ;
     }
@@ -1542,8 +1542,8 @@ T_void MapSetLowerTextureForSide(T_word16 sideNum, T_byte8 *p_textureName)
     p_side->lowerTx[0] = textureName[0] ;
 
     if ((textureName[0] != '\0') && (textureName[0] != '-'))
-        TX_PTR_SET(p_side->lowerTx,
-            PictureLock(textureName, &G_3dLowerResourceArray[sideNum])) ;
+        G_3dLowerTextureArray[sideNum] =
+            PictureLock(textureName, &G_3dLowerResourceArray[sideNum]) ;
     else {
         G_3dLowerResourceArray[sideNum] = RESOURCE_BAD ;
     }
@@ -1582,8 +1582,8 @@ T_void MapSetUpperTextureForSide(T_word16 sideNum, T_byte8 *p_textureName)
     p_side->upperTx[0] = textureName[0] ;
 
     if ((textureName[0] != '\0') && (textureName[0] != '-'))
-        TX_PTR_SET(p_side->upperTx,
-            PictureLock(textureName, &G_3dUpperResourceArray[sideNum])) ;
+        G_3dUpperTextureArray[sideNum] =
+            PictureLock(textureName, &G_3dUpperResourceArray[sideNum]) ;
     else {
         G_3dUpperResourceArray[sideNum] = RESOURCE_BAD ;
     }
@@ -1613,20 +1613,10 @@ T_void MapSetWallTexture(T_word16 sideNum, T_byte8 *p_textureName)
 
     p_side = &G_3dSideArray[sideNum] ;
 
-#ifdef TARGET_UNIX
-    /* On Unix/64-bit, TX_PTR_FIELD writes at byte offset 0, overwriting
-     * txField[0] with pointer bytes for every slot (including empty ones).
-     * The '-' sentinel is no longer reliable after ILockPictures.
-     * Use the resource array: RESOURCE_BAD means no texture in that slot. */
-    if (G_3dMainResourceArray[sideNum] != RESOURCE_BAD)  {
-        MapSetMainTextureForSide(sideNum, p_textureName) ;
-    } else if (G_3dLowerResourceArray[sideNum] != RESOURCE_BAD)  {
-        MapSetLowerTextureForSide(sideNum, p_textureName) ;
-    } else if (G_3dUpperResourceArray[sideNum] != RESOURCE_BAD)  {
-        MapSetUpperTextureForSide(sideNum, p_textureName) ;
-    }
-#else
-    /* Try in this order:  main, lower, & upper */
+    /* Try in this order:  main, lower, & upper.  The texture pointer now
+       lives in G_3d*TextureArray rather than being stuffed over the name
+       bytes, so the '-' sentinel is intact on every target -- no TARGET_UNIX
+       resource-array fallback needed. */
     if (p_side->mainTx[0] != '-')  {
         MapSetMainTextureForSide(sideNum, p_textureName) ;
     } else if (p_side->lowerTx[0] != '-')  {
@@ -1634,7 +1624,6 @@ T_void MapSetWallTexture(T_word16 sideNum, T_byte8 *p_textureName)
     } else if (p_side->upperTx[0] != '-')  {
         MapSetUpperTextureForSide(sideNum, p_textureName) ;
     }
-#endif
 
     DebugEnd() ;
 }
@@ -1668,10 +1657,10 @@ T_void MapSetFloorTextureForSector(
         PictureUnlockAndUnfind(G_3dFloorResourceArray[sectorNum]) ;
 
     if ((textureName[0] != '\0') && (textureName[0] != '-'))
-        TX_PTR_SET(p_sector->floorTx,
-            PictureLock(textureName, &G_3dFloorResourceArray[sectorNum])) ;
+        G_3dFloorTextureArray[sectorNum] =
+            PictureLock(textureName, &G_3dFloorResourceArray[sectorNum]) ;
     else
-        TX_PTR_SET(p_sector->floorTx, NULL) ;
+        G_3dFloorTextureArray[sectorNum] = NULL ;
 
     DebugEnd() ;
 }
@@ -1705,10 +1694,10 @@ T_void MapSetCeilingTextureForSector(
         PictureUnlockAndUnfind(G_3dCeilingResourceArray[sectorNum]) ;
 
     if ((textureName[0] != '\0') && (textureName[0] != '-'))
-        TX_PTR_SET(p_sector->ceilingTx,
-            PictureLock(textureName, &G_3dCeilingResourceArray[sectorNum])) ;
+        G_3dCeilingTextureArray[sectorNum] =
+            PictureLock(textureName, &G_3dCeilingResourceArray[sectorNum]) ;
     else
-        TX_PTR_SET(p_sector->ceilingTx, NULL) ;
+        G_3dCeilingTextureArray[sectorNum] = NULL ;
 
     DebugEnd() ;
 }
@@ -1774,7 +1763,7 @@ T_byte8 *MapGetUpperTextureName(T_word16 sideNum)
     if (p_side->upperTx[0] == '-')  {
         p_name = G_noName ;
     } else {
-        p_pic = TX_PTR_GET(p_side->upperTx) ;
+        p_pic = G_3dUpperTextureArray[sideNum] ;
         p_name = PictureGetName(p_pic) ;
     }
 
@@ -1808,7 +1797,7 @@ T_byte8 *MapGetLowerTextureName(T_word16 sideNum)
     if (p_side->lowerTx[0] == '-')  {
         p_name = G_noName ;
     } else {
-        p_pic = TX_PTR_GET(p_side->lowerTx) ;
+        p_pic = G_3dLowerTextureArray[sideNum] ;
         p_name = PictureGetName(p_pic) ;
     }
 
@@ -1842,7 +1831,7 @@ T_byte8 *MapGetMainTextureName(T_word16 sideNum)
     if (p_side->mainTx[0] == '-')  {
         p_name = G_noName ;
     } else {
-        p_pic = TX_PTR_GET(p_side->mainTx) ;
+        p_pic = G_3dMainTextureArray[sideNum] ;
         p_name = PictureGetName(p_pic) ;
     }
 
@@ -1873,7 +1862,7 @@ T_byte8 *MapGetFloorTextureName(T_word16 sectorNum)
     DebugCheck(sectorNum < G_Num3dSectors) ;
 
     p_sector = G_3dSectorArray + sectorNum ;
-    p_pic = TX_PTR_GET(p_sector->floorTx) ;
+    p_pic = G_3dFloorTextureArray[sectorNum] ;
     p_name = PictureGetName(p_pic) ;
 
     DebugEnd() ;
@@ -1903,7 +1892,7 @@ T_byte8 *MapGetCeilingTextureName(T_word16 sectorNum)
     DebugCheck(sectorNum < G_Num3dSectors) ;
 
     p_sector = G_3dSectorArray + sectorNum ;
-    p_pic = TX_PTR_GET(p_sector->ceilingTx) ;
+    p_pic = G_3dCeilingTextureArray[sectorNum] ;
     p_name = PictureGetName(p_pic) ;
 
     DebugEnd() ;

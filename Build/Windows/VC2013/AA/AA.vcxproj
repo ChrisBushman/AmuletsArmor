@@ -380,6 +380,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="..\..\..\..\Source\3D_COLLI.C" />
+    <ClCompile Include="..\..\..\..\Source\3D_GEO.C" />
     <ClCompile Include="..\..\..\..\Source\3D_IO.C" />
     <ClCompile Include="..\..\..\..\Source\3D_TRIG.C" />
     <ClCompile Include="..\..\..\..\Source\3D_VIEW.C">
