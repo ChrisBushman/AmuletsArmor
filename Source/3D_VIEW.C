@@ -4575,17 +4575,7 @@ T_void IDrawObjectAndWallRuns(T_void)
                 continue ;
 
             invW  = IRaveInvW((float)p_ri->distance) ;
-            /* Bias the billboard toward the camera. A sprite stands ON the floor,
-               but the floor run's depth carries the MathInvCosineLookup edge-swing
-               (IDrawFloorRun) while the sprite uses the raw perpendicular distance
-               -- so on the shared z-buffer the floor z-fights and carves the
-               sprite's lower body (the "barrel is a thin cap" bug). Sprites are
-               never behind the floor they rest on, so nudging their z nearer lets
-               them win that fight without poking through genuinely-nearer walls
-               (which differ in z by far more than this bias). */
-            z     = IRaveZ(invW) - 0.10f ;
-            if (z < 0.0f)
-                z = 0.0f ;
+            z     = IRaveZ(invW) ;
             light = IRaveShadeToLight(p_ri->distance, (T_sword16)(p_ri->light >> 2)) ;
 
             /* u: 0..picW left->right, flipped for reversed sprites. */
@@ -4600,12 +4590,10 @@ T_void IDrawObjectAndWallRuns(T_void)
             syT = (float)p_ri->top ;
             syB = (float)p_ri->realBottom ;  /* full sprite; z-buffer clips */
 
-            /* V: large-v at the screen-TOP corner, 0 at the bottom -- the SAME
-               convention the walls use (IAddWall: vTop on the top corners), which
-               render upright. RAVE's texture sampling is bottom-up, so the earlier
-               "v=0 at top" put the sprite in upside-down (the reported inversion).
-               v only spans [0..picHeight], so the POT padding above picHeight is
-               never sampled. */
+            /* V: large-v (picHeight) at the screen-TOP corner, 0 at the bottom --
+               the SAME convention the walls use (IAddWall vTop), which render
+               upright. CONFIRMED on hardware: this flip makes sprites right-side
+               up. v spans only [0..picHeight] so the POT padding is never sampled. */
             oTL.x=sxL; oTL.y=syT; oTL.z=z; oTL.invW=invW; oTL.u=uA; oTL.v=vH;   oTL.light=light ;
             oBL.x=sxL; oBL.y=syB; oBL.z=z; oBL.invW=invW; oBL.u=uA; oBL.v=0.0f; oBL.light=light ;
             oBR.x=sxR; oBR.y=syB; oBR.z=z; oBR.invW=invW; oBR.u=uB; oBR.v=0.0f; oBR.light=light ;

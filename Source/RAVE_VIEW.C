@@ -324,6 +324,24 @@ static TQATexture *IRaveUploadSprite(T_byte8 *p_picture, T_word16 w, T_word16 h)
 
     GrGetPalette(0, 256, pal) ;
 
+#if 0
+    /* TEMP TEST (flip to #if 1 to run): fill the whole logical sprite rect
+       [0..w)x[0..h) with a solid OPAQUE RED, ignoring the column decode. This
+       isolates the "barrel renders as ~40% crop" bug: if the billboard now shows
+       a solid red rectangle the full height of the sprite (top..realBottom), the
+       UV mapping + geometry are correct and the crop lives in the decode; if the
+       red is still only ~40% tall, the crop is in the UV/geometry. This is the
+       planned NEXT diagnostic for the crop -- was built + deployed but not yet
+       evaluated on hardware (empty-quest-list build blocked it). */
+    {
+        T_word16 rr, cc ;
+        (void)cols ;
+        for (rr = 0 ; rr < h ; rr++)
+            for (cc = 0 ; cc < w ; cc++)
+                buf[(T_word32)rr * potW + cc] =
+                    (unsigned short)(0x8000 | (0x1F << 10)) ; /* opaque red */
+    }
+#else
     /* Decode each column's opaque run into the row-major POT buffer. */
     for (col = 0 ; col < w ; col++) {
         T_byte8 st = cols[col].start ;
@@ -339,6 +357,7 @@ static TQATexture *IRaveUploadSprite(T_byte8 *p_picture, T_word16 w, T_word16 h)
         for (r = st ; r <= en ; r++)
             buf[(T_word32)r * potW + col] = IRaveArgb16(pal, colBase[r]) ;
     }
+#endif
 
     image.width    = (long)potW ;
     image.height   = (long)potH ;
