@@ -320,6 +320,17 @@ static void IReadIni(void)
             G_iniDetail = IClampInt(atoi(value), 1, RESSCALE_DETAIL_MAX);
         else if (ICompareKey(key, "vsync") == 0)
             G_iniVsync = (atoi(value) != 0);
+        else if (ICompareKey(key, "renderer") == 0)  {
+            /* rave-7: 3D renderer choice. "software" forces the CPU renderer;
+               "rave"/"hardware" selects the RAVE HW backend. No-op on non-RAVE
+               builds. Unset -> build default (RAVE on where compiled in). The
+               in-game F12 hotkey toggles it live regardless. */
+            if (ICompareKey(value, "software") == 0)
+                RaveViewSetEnabled(FALSE);
+            else if ((ICompareKey(value, "rave") == 0) ||
+                     (ICompareKey(value, "hardware") == 0))
+                RaveViewSetEnabled(TRUE);
+        }
     }
     fclose(fp);
 }
@@ -789,8 +800,7 @@ fallback:
 
 static void ResScaleRaveComposite(void)
 {
-    T_word16       *src ;
-    T_word16        srcW = 0, srcH = 0 ;
+    T_raveFrame     fr ;
     SDL_PixelFormat *fmt ;
     Uint8          *dstBase ;
     int             dstPitch, realBytes ;
@@ -799,16 +809,19 @@ static void ResScaleRaveComposite(void)
 
     if ((G_real == NULL) || (G_logicalW <= 0) || (G_logicalH <= 0))
         return ;
-    if (!RaveViewGetFrame(&src, &srcW, &srcH))
+    if (!RaveViewGetFrame(&fr))
         return ;                       /* no RAVE frame -> software view shows */
-    if ((srcW == 0) || (srcH == 0))
+    if ((fr.viewW == 0) || (fr.viewH == 0) || (fr.pixels == NULL))
         return ;
 
-    /* On-screen VIEW3D rect in G_real window pixels. */
-    x0 = G_dstX + (int)(((long)RAVE_VIEW_ORIGX * G_dstW) / RAVE_BASE_W) ;
-    y0 = G_dstY + (int)(((long)RAVE_VIEW_ORIGY * G_dstH) / RAVE_BASE_H) ;
-    rw = (int)(((long)srcW * G_dstW) / G_logicalW) ;
-    rh = (int)(((long)srcH * G_dstH) / G_logicalH) ;
+    /* On-screen rect of the CURRENT (possibly menu-shrunk) view, in G_real
+       window pixels. The view's left edge in the logical frame is the base
+       origin (scaled) plus the clip offset viewX; width follows the clip. */
+    x0 = G_dstX + (int)(((long)fr.overlayOrgX * G_dstW) / RAVE_BASE_W)
+               + (int)(((long)fr.viewX * G_dstW) / G_logicalW) ;
+    y0 = G_dstY + (int)(((long)fr.overlayOrgY * G_dstH) / RAVE_BASE_H) ;
+    rw = (int)(((long)fr.viewW * G_dstW) / G_logicalW) ;
+    rh = (int)(((long)fr.viewH * G_dstH) / G_logicalH) ;
     if ((rw <= 0) || (rh <= 0))
         return ;
 
@@ -825,26 +838,44 @@ static void ResScaleRaveComposite(void)
 
     for (y = 0 ; y < rh ; y++)  {
         int       wy = y0 + y ;
-        int       sy = (int)(((long)y * srcH) / rh) ;   /* nearest-neighbour */
+        int       sy = (int)(((long)y * fr.viewH) / rh) ;   /* nearest-neighbour */
         T_word16 *srcRow ;
         Uint8    *dstRow ;
+        int       by ;
 
         if ((wy < 0) || (wy >= G_real->h))
             continue ;
-        if (sy >= srcH) sy = srcH - 1 ;
-        srcRow = src + (long)sy * srcW ;
+        if (sy >= fr.viewH) sy = fr.viewH - 1 ;
+        if (fr.flipY) sy = fr.viewH - 1 - sy ;   /* RAVE back-buffer is bottom-up */
+        srcRow = fr.pixels + (long)sy * fr.stride + fr.viewX ;
         dstRow = dstBase + (long)wy * dstPitch ;
+
+        /* overlay row (base 320x200), from this window row */
+        by = (int)(((long)(wy - G_dstY) * fr.overlayH) / G_dstH) ;
+        if (by < 0) by = 0 ; if (by >= fr.overlayH) by = fr.overlayH - 1 ;
 
         for (x = 0 ; x < rw ; x++)  {
             int      wx = x0 + x ;
-            int      sx = (int)(((long)x * srcW) / rw) ;
+            int      sx = (int)(((long)x * fr.viewW) / rw) ;
+            int      bx ;
             unsigned r8, g8, b8 ;
             Uint32   col ;
             T_word16 p ;
 
             if ((wx < 0) || (wx >= G_real->w))
                 continue ;
-            if (sx >= srcW) sx = srcW - 1 ;
+            if (sx >= fr.viewW) sx = fr.viewW - 1 ;
+
+            /* Overlay key: where AA drew UI over the view (weapon, overhead
+               map, crosshair, cursor -> overlay != 0), keep it; only the 3D
+               background (overlay == 0) gets the RAVE pixel. */
+            if (fr.overlay != NULL)  {
+                bx = (int)(((long)(wx - G_dstX) * fr.overlayW) / G_dstW) ;
+                if (bx < 0) bx = 0 ; if (bx >= fr.overlayW) bx = fr.overlayW - 1 ;
+                if (fr.overlay[(long)by * fr.overlayW + bx] != 0)
+                    continue ;
+            }
+
             p  = srcRow[sx] ;
             r8 = (unsigned)(((p >> 10) & 0x1F) << 3) ;   /* 5-bit -> 8-bit */
             g8 = (unsigned)(((p >>  5) & 0x1F) << 3) ;

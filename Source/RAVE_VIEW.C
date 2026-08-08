@@ -60,6 +60,12 @@ static T_word16  G_raveFrameW     = 0 ;     /* == context width  (VIEW3D_WIDTH)*
 static T_word16  G_raveFrameH     = 0 ;     /* == context height (VIEW3D_HEIGHT)*/
 static E_Boolean G_raveFrameReady = FALSE ; /* a frame is in G_raveFrameBuf   */
 
+/* Runtime software<->RAVE switch (hotkey + resolution.ini). When FALSE the
+   whole RAVE path goes dormant -- IsActive/IsPresenting/GetFrame report off,
+   FrameBegin/End/Emit no-op -- so the software renderer draws and is shown,
+   with no rebuild. Default ON for the RAVE build; the ini can force it off. */
+static E_Boolean G_raveEnabled    = TRUE ;
+
 /*-------------------------------------------------------------------------*
  * Texture cache (rave-2).  Keyed by the pixel pointer AA hands the software
  * renderer (G_3d*TextureArray[] entries); each maps to an uploaded
@@ -522,7 +528,7 @@ T_void RaveViewFinish(T_void)
  *-------------------------------------------------------------------------*/
 T_void RaveViewFrameBegin(T_void)
 {
-    if (G_raveContext == NULL)
+    if (!RaveViewIsActive())
         return ;
 
     /* rave-4: background must be set before QARenderStart, which (NULL initial
@@ -537,7 +543,7 @@ T_void RaveViewFrameEnd(T_void)
     TQAPixelBuffer pb ;
     TQAError       err ;
 
-    if (G_raveContext == NULL)
+    if (!RaveViewIsActive())
         return ;
 
     QARenderEnd(G_raveContext, NULL) ;      /* DontSwap: stays in back buffer */
@@ -605,13 +611,34 @@ T_void RaveViewFrameEnd(T_void)
 /* rave-7: hand the composited RGB555 frame (+ its dimensions) to the display
    compositor. Returns FALSE when no RAVE frame is available (inactive build,
    no context, or readback failed) -- caller then shows the software frame. */
-E_Boolean RaveViewGetFrame(T_word16 **p_base, T_word16 *p_w, T_word16 *p_h)
+E_Boolean RaveViewGetFrame(T_raveFrame *out)
 {
-    if (!G_raveFrameReady || (G_raveFrameBuf == NULL))
+    T_sword16 clipL, clipR ;
+
+    if (out == NULL)
         return FALSE ;
-    if (p_base) *p_base = G_raveFrameBuf ;
-    if (p_w)    *p_w    = G_raveFrameW ;
-    if (p_h)    *p_h    = G_raveFrameH ;
+    if (!G_raveEnabled || !G_raveFrameReady || (G_raveFrameBuf == NULL))
+        return FALSE ;
+
+    /* Current visible view width (shrinks when a menu opens; View3dClipCenter
+       left-anchors it, so viewX is CLIP_LEFT and the width follows the clip). */
+    clipL = VIEW3D_CLIP_LEFT ;
+    clipR = VIEW3D_CLIP_RIGHT ;
+    if (clipL < 0) clipL = 0 ;
+    if (clipR > (T_sword16)G_raveFrameW) clipR = (T_sword16)G_raveFrameW ;
+    if (clipR <= clipL) { clipL = 0 ; clipR = (T_sword16)G_raveFrameW ; }
+
+    out->pixels      = G_raveFrameBuf ;
+    out->stride      = G_raveFrameW ;
+    out->viewX       = (T_word16)clipL ;
+    out->viewW       = (T_word16)(clipR - clipL) ;
+    out->viewH       = G_raveFrameH ;
+    out->flipY       = 1 ;   /* RAVE back-buffer read-back is bottom-up */
+    out->overlay     = (T_byte8 *)View3dGetOverlayScreen() ;
+    out->overlayW    = 320 ; /* overlay layer is base 320x200 (3D_VIEW.C) */
+    out->overlayH    = 200 ;
+    out->overlayOrgX = 4 ;   /* VIEW3D_ORIGIN_X in base coords */
+    out->overlayOrgY = 3 ;   /* VIEW3D_ORIGIN_Y */
     return TRUE ;
 }
 
@@ -623,7 +650,7 @@ E_Boolean RaveViewGetFrame(T_word16 **p_base, T_word16 *p_w, T_word16 *p_h)
    frame. Never a permanent black screen. */
 E_Boolean RaveViewIsPresenting(T_void)
 {
-    return G_raveFrameReady ? TRUE : FALSE ;
+    return (G_raveFrameReady && G_raveEnabled) ? TRUE : FALSE ;
 }
 
 /* Core: bind an already-resolved TQATexture and draw the quad (TL,BL,BR,TR)
@@ -677,7 +704,7 @@ T_void RaveViewEmitQuad(
 {
     TQATexture *tex ;
 
-    if (G_raveContext == NULL)
+    if (!RaveViewIsActive())
         return ;
     tex = IRaveGetTexture(p_texture) ;
     if (tex == NULL)
@@ -701,7 +728,7 @@ T_void RaveViewEmitSprite(
 {
     TQATexture *tex ;
 
-    if (G_raveContext == NULL)
+    if (!RaveViewIsActive())
         return ;
     tex = IRaveGetSprite(p_picture, w, h) ;
     if (tex == NULL)
@@ -714,7 +741,29 @@ T_void RaveViewEmitSprite(
 
 E_Boolean RaveViewIsActive(T_void)
 {
-    return (G_raveContext != NULL) ? TRUE : FALSE ;
+    return ((G_raveContext != NULL) && G_raveEnabled) ? TRUE : FALSE ;
+}
+
+/* Runtime software<->RAVE switch. RaveViewSetEnabled(FALSE) drops the RAVE
+   path immediately (and clears the ready frame so the compositor stops), so
+   the next frame renders + shows software. RaveViewToggle returns the new
+   state. Used by the in-game hotkey and the resolution.ini "renderer" option. */
+T_void RaveViewSetEnabled(E_Boolean on)
+{
+    G_raveEnabled = on ? TRUE : FALSE ;
+    if (!G_raveEnabled)
+        G_raveFrameReady = FALSE ;
+}
+
+E_Boolean RaveViewGetEnabled(T_void)
+{
+    return G_raveEnabled ;
+}
+
+E_Boolean RaveViewToggle(T_void)
+{
+    RaveViewSetEnabled(G_raveEnabled ? FALSE : TRUE) ;
+    return G_raveEnabled ;
 }
 
 #else  /* not a RAVE build -- no-op stubs so this file links everywhere */
@@ -726,13 +775,16 @@ T_void    RaveViewFrameEnd(T_void)      {}
 T_void    RaveViewFlushTextures(T_void) {}
 E_Boolean RaveViewIsActive(T_void)      { return FALSE ; }
 
-E_Boolean RaveViewGetFrame(T_word16 **p_base, T_word16 *p_w, T_word16 *p_h)
+E_Boolean RaveViewGetFrame(T_raveFrame *out)
 {
-    (void)p_base ; (void)p_w ; (void)p_h ;
+    (void)out ;
     return FALSE ;
 }
 
 E_Boolean RaveViewIsPresenting(T_void)  { return FALSE ; }
+T_void    RaveViewSetEnabled(E_Boolean on) { (void)on ; }
+E_Boolean RaveViewGetEnabled(T_void)    { return FALSE ; }
+E_Boolean RaveViewToggle(T_void)        { return FALSE ; }
 
 T_void RaveViewEmitQuad(
            T_byte8 *p_texture,

@@ -85,11 +85,27 @@ T_void RaveViewFlushTextures(T_void) ;
    back to the software renderer). */
 E_Boolean RaveViewIsActive(T_void) ;
 
-/* rave-7: fetch the last rendered RAVE frame as a canonical RGB555 buffer
-   (bit15 unused), row-major, W*H. Returns FALSE if none is available (RAVE
-   inactive / no context / readback failed). The display compositor
-   (ResScaleRaveComposite) scales this into the on-screen VIEW3D rect. */
-E_Boolean RaveViewGetFrame(T_word16 **p_base, T_word16 *p_w, T_word16 *p_h) ;
+/* rave-7: everything the display compositor needs to lay the RAVE view over
+   the UI, at the CURRENT (possibly menu-shrunk) view rect. Plain types only
+   (no RAVE/3D internals leak to RESSCALE.C). */
+typedef struct {
+    T_word16 *pixels ;     /* RGB555 back-buffer read-back (bit15 unused)      */
+    T_word16  stride ;     /* buffer row stride in pixels (full context width) */
+    T_word16  viewX ;      /* visible view's left edge within the buffer       */
+    T_word16  viewW ;      /* visible view width  (shrinks with menus)         */
+    T_word16  viewH ;      /* visible view height                              */
+    T_word16  flipY ;      /* 1 = buffer is bottom-up; composite reads flipped */
+    T_byte8  *overlay ;    /* UI key layer, base 320x200: 0 = show 3D, !=0 UI  */
+    T_word16  overlayW ;   /* overlay width  (base logical, e.g. 320)          */
+    T_word16  overlayH ;   /* overlay height (base logical, e.g. 200)          */
+    T_word16  overlayOrgX ;/* view's left in overlay/base coords (VIEW3D_ORIGIN_X)*/
+    T_word16  overlayOrgY ;/* view's top  in overlay/base coords (VIEW3D_ORIGIN_Y)*/
+} T_raveFrame ;
+
+/* Fill *out with the last rendered RAVE frame + placement. Returns FALSE if
+   none is available (RAVE inactive/disabled/no context/readback failed) -- the
+   compositor then leaves the software view showing. */
+E_Boolean RaveViewGetFrame(T_raveFrame *out) ;
 
 /* rave-7 offload: TRUE once RAVE is successfully presenting frames -- the
    caller (3D_VIEW.C) then skips the software 3D raster since the HW view is
@@ -97,6 +113,14 @@ E_Boolean RaveViewGetFrame(T_word16 **p_base, T_word16 *p_w, T_word16 *p_h) ;
    again after any failed present, so the software renderer always covers gaps
    (never a permanent black 3D view). Always FALSE on non-RAVE builds. */
 E_Boolean RaveViewIsPresenting(T_void) ;
+
+/* Runtime software<->RAVE switch (in-game F-key hotkey + resolution.ini
+   "renderer" option). SetEnabled(FALSE) makes the whole RAVE path dormant so
+   the software renderer draws + shows, no rebuild. Toggle flips and returns the
+   new state; GetEnabled reports it. All no-ops / FALSE on non-RAVE builds. */
+T_void    RaveViewSetEnabled(E_Boolean on) ;
+E_Boolean RaveViewGetEnabled(T_void) ;
+E_Boolean RaveViewToggle(T_void) ;
 
 #endif /* _RAVE_VIEW_H_ */
 

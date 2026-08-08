@@ -4516,6 +4516,9 @@ T_void IDrawObjectAndWallRuns(T_void)
             syT = (float)p_ri->top ;
             syB = (float)p_ri->realBottom ;  /* full sprite; z-buffer clips */
 
+            /* screen-top -> texel 0, matching the software renderer's sprite
+               mapping (AA object pictures are top-down). The whole-view vertical
+               flip is corrected once in the compositor, not per-sprite. */
             oTL.x=sxL; oTL.y=syT; oTL.z=z; oTL.invW=invW; oTL.u=uA; oTL.v=0.0f; oTL.light=light ;
             oBL.x=sxL; oBL.y=syB; oBL.z=z; oBL.invW=invW; oBL.u=uA; oBL.v=vH;   oBL.light=light ;
             oBR.x=sxR; oBR.y=syB; oBR.z=z; oBR.invW=invW; oBR.u=uB; oBR.v=vH;   oBR.light=light ;

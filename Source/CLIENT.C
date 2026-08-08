@@ -44,6 +44,7 @@
 #include "MEMORY.H"
 #include "MESSAGE.H"
 #include "OBJECT.H"
+#include "RAVE_VIEW.H"   /* F12 software<->RAVE renderer toggle (no-op off-RAVE) */
 #include "OVERHEAD.H"
 #include "OVERLAY.H"
 #include "PACKETDT.H"
@@ -1147,6 +1148,21 @@ T_void ClientUpdate(T_void)
                 MessageAdd(buffer) ;
             }
 #endif
+
+#if defined(macintosh) && defined(AA_RENDERER_RAVE)
+            /* rave-7: F12 toggles software<->RAVE live for A/B comparison.
+               Edge-detected so one press = one toggle. */
+            {
+                static E_Boolean s_ravePrevF12 = FALSE ;
+                E_Boolean nowF12 = KeyboardGetScanCode(KEY_SCAN_CODE_F12) ;
+                if (nowF12 && !s_ravePrevF12)
+                    MessageAdd(RaveViewToggle()
+                                   ? "Renderer: RAVE (hardware)"
+                                   : "Renderer: software") ;
+                s_ravePrevF12 = nowF12 ;
+            }
+#endif
+
             playerMoveAngle = PlayerGetAngle() ;
 
             if (!EscapeMenuIsOpen()) {
