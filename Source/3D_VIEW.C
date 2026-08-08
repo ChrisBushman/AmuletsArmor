@@ -24,6 +24,7 @@
 #include "MEMORY.H"
 #include "PICS.H"
 #include "RAVE_VIEW.H"   /* rave-5: emit wall geometry to the RAVE HW backend */
+#include "MESSAGE.H"     /* MessageAdd -- temporary RAVE sprite diagnostic */
 #include "TICKER.H"
 #include "VIEW.H"
 
@@ -4534,6 +4535,30 @@ T_void IDrawObjectAndWallRuns(T_void)
        until rave-7). Alpha-test cutout (rave-4) drops transparent texels. */
     {
         T_word16 o ;
+
+        /* TEMP DIAGNOSTIC (remove after): dump object 0's real dims/extent and
+           a middle column's opaque range, throttled, so we can see why sprites
+           render as thin caps instead of guessing. */
+        {
+            static T_word16 s_diagTick = 0 ;
+            if ((G_objectCount > 0) && (((s_diagTick++) % 90) == 0)) {
+                T_3dObjectRunInfo *ri = &G_objectRun[0].runInfo ;
+                if ((ri->p_obj != NULL) && (ri->p_picture != NULL)) {
+                    T_word16 pw = ObjectGetPictureWidth(ri->p_obj) ;
+                    T_pictureRaster *rt = (T_pictureRaster *)ri->p_picture ;
+                    T_word16 midc = (T_word16)(pw >> 1) ;
+                    T_byte8 buf[80] ;
+                    sprintf((char *)buf, "o0 pW=%d pH=%d t=%d b=%d rb=%d",
+                            pw, ri->picHeight, ri->top, ri->bottom, ri->realBottom) ;
+                    MessageAdd(buf) ;
+                    sprintf((char *)buf, "o0 mid col=%d st=%d en=%d off=%d",
+                            midc, rt[midc].start, rt[midc].end,
+                            EndianLE16(rt[midc].offset)) ;
+                    MessageAdd(buf) ;
+                }
+            }
+        }
+
         for (o = 0 ; o < G_objectCount ; o++) {
             T_3dObjectRun     *p_or  = &G_objectRun[o] ;
             T_3dObjectRunInfo *p_ri  = &p_or->runInfo ;
@@ -5164,6 +5189,14 @@ DebugCheck(start < MAX_VIEW3D_WIDTH) ;
         p_shade = IDetermineShade(distance>>16, p_sector->light>>2) ;
 
 #if defined(macintosh) && defined(AA_RENDERER_RAVE)
+        /* rave-8: sky-ceiling runs (transparentFlag = sector trigger&1, in the
+           ceiling half row<=HALF) must NOT emit the F_SKY ceiling texture -- the
+           software renderer draws the backdrop there instead, and our far-depth
+           backdrop quad (emitted in View3dDrawView) fills it. Emitting the
+           ceiling texture here would occlude that backdrop. Skip it. */
+        if (transparentFlag && (row <= VIEW3D_HALF_HEIGHT))  {
+            /* sky: leave the ceiling to the backdrop quad */
+        } else
         /* rave-5b: emit this floor/ceiling run as a 1-row-tall textured quad.
            x,y are world coords (16.16) at column `start`; dx,dy step world
            coords per screen column; `distance` is the row's world depth (16.16,
