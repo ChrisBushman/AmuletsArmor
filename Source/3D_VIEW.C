@@ -23,6 +23,7 @@
 #include "MAP.H"
 #include "MEMORY.H"
 #include "PICS.H"
+#include "RAVE_VIEW.H"   /* rave-5: emit wall geometry to the RAVE HW backend */
 #include "TICKER.H"
 #include "VIEW.H"
 
@@ -2815,6 +2816,86 @@ INDICATOR_LIGHT(829, INDICATOR_RED) ;
         INDICATOR_LIGHT(821, INDICATOR_RED) ;
         return ;
     }
+
+#if defined(macintosh) && defined(AA_RENDERER_RAVE)
+    /* rave-5: emit this wall piece (main/upper/lower) to the RAVE engine as a
+       textured, gouraud-lit quad, using the corners AA just projected. The
+       RAVE z-buffer handles occlusion, so we emit the full wall (no software
+       column-occlusion clip needed). sx1/sx2 are still the true wall extent
+       here (the CLIP_LEFT clamp below hasn't run yet). Runs alongside the
+       software raster (which still draws + is shown until rave-7). */
+    if ((G_wall.p_texture != NULL) && (relativeFromZ > 0) && (relativeToZ > 0)) {
+        T_raveVertex rvTL, rvBL, rvBR, rvTR ;
+        T_sword32    hoxL = (T_sword32)sx1 - VIEW3D_HALF_WIDTH ;
+        T_sword32    hoxR = (T_sword32)sx2 - VIEW3D_HALF_WIDTH ;
+        T_sword32    bcL  = G_wall.a * hoxL + G_wall.c ;
+        T_sword32    bcR  = G_wall.a * hoxR + G_wall.c ;
+        T_sword32    tvL  = G_wall.g * hoxL + G_wall.i ;
+        T_sword32    tvR  = G_wall.g * hoxR + G_wall.i ;
+        T_sword32    vvL = 0, vvR = 0 ;
+        float        uL, uR, vTop, vBot ;
+        float        invWL, invWR, zL, zR, lightL, lightR ;
+        T_sword16    shadeStart ;
+
+        /* Horizontal texel column at each end -- mirrors AA's per-column v
+           (lines ~2901-2908) then texel = G_wall.offX - v (unwrapped; RAVE
+           tiles). */
+        if ((bcL >> 4) != 0) {
+            T_sword32 den = bcL >> 4 ;
+            vvL = ((tvL / den) << 16) + Div32by32To1616Asm(tvL % den, den) ;
+            vvL >>= 10 ;
+        }
+        if ((bcR >> 4) != 0) {
+            T_sword32 den = bcR >> 4 ;
+            vvR = ((tvR / den) << 16) + Div32by32To1616Asm(tvR % den, den) ;
+            vvR >>= 10 ;
+        }
+        uL = (float)(G_wall.offX - vvL) ;
+        uR = (float)(G_wall.offX - vvR) ;
+
+        /* Vertical texel: ~1 texel per world unit, anchored offY at the top,
+           spanning the wall's world height. (Per-side vertical pegging is a
+           later refinement; this is the on-hardware calibration point.) */
+        vTop = (float)G_wall.offY ;
+        vBot = (float)G_wall.offY + (float)(absoluteTop - absoluteBottom) ;
+
+        /* invW = 1/distance (AA's inverse-distance is 16.16), depth 0..1. */
+        invWL = (float)invDFromZ / 65536.0f ;
+        invWR = (float)invDToZ   / 65536.0f ;
+        zL = 1.0f - invWL * 16.0f ; if (zL < 0.0f) zL = 0.0f ; if (zL > 1.0f) zL = 1.0f ;
+        zR = 1.0f - invWR * 16.0f ; if (zR < 0.0f) zR = 0.0f ; if (zR > 1.0f) zR = 1.0f ;
+
+        /* Per-end brightness: sector shade (0..63) + darkness knob + near
+           boost (mirrors IDetermineShade). */
+        shadeStart = (T_sword16)G_wall.shadeIndex + G_darknessAdjustment ;
+        if (shadeStart < 0)  shadeStart = 0 ;
+        if (shadeStart > 63) shadeStart = 63 ;
+        {
+            T_sword32 dA = relativeFromZ, dB = relativeToZ, iA, iB ;
+            if (dA >= 171) { iA = shadeStart ; }
+            else { T_sword32 d = dA + (dA >> 1) ; iA = (256 - d) >> 3 ;
+                   if (iA < 0) iA = 0 ; iA += shadeStart ; if (iA > 63) iA = 63 ; }
+            if (dB >= 171) { iB = shadeStart ; }
+            else { T_sword32 d = dB + (dB >> 1) ; iB = (256 - d) >> 3 ;
+                   if (iB < 0) iB = 0 ; iB += shadeStart ; if (iB > 63) iB = 63 ; }
+            lightL = (float)iA / 63.0f ;
+            lightR = (float)iB / 63.0f ;
+        }
+
+        /* Corners: screen X is context-relative (CLIP_LEFT origin); Y from the
+           16.16 projected edges. */
+        rvTL.x = (float)(sx1 - VIEW3D_CLIP_LEFT) ; rvTL.y = (float)(scrYTopLeft    >> 16) ;
+        rvTL.z = zL ; rvTL.invW = invWL ; rvTL.u = uL ; rvTL.v = vTop ; rvTL.light = lightL ;
+        rvBL.x = rvTL.x ;                          rvBL.y = (float)(scrYBottomLeft >> 16) ;
+        rvBL.z = zL ; rvBL.invW = invWL ; rvBL.u = uL ; rvBL.v = vBot ; rvBL.light = lightL ;
+        rvBR.x = (float)(sx2 - VIEW3D_CLIP_LEFT) ; rvBR.y = (float)(scrYBottomRight>> 16) ;
+        rvBR.z = zR ; rvBR.invW = invWR ; rvBR.u = uR ; rvBR.v = vBot ; rvBR.light = lightR ;
+        rvTR.x = rvBR.x ;                          rvTR.y = (float)(scrYTopRight   >> 16) ;
+        rvTR.z = zR ; rvTR.invW = invWR ; rvTR.u = uR ; rvTR.v = vTop ; rvTR.light = lightR ;
+
+        RaveViewEmitQuad(G_wall.p_texture, &rvTL, &rvBL, &rvBR, &rvTR) ;
+    }
+#endif /* macintosh && AA_RENDERER_RAVE */
 
     /* Compute the step rates for "drawing a pair of lines" between the */
     /* top and bottom edges. */

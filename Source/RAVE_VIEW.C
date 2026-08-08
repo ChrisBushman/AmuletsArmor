@@ -367,46 +367,90 @@ T_void RaveViewFinish(T_void)
     G_raveEngine = NULL ;
 }
 
-T_void RaveViewDrawView(T_void)
+/*-------------------------------------------------------------------------*
+ * rave-5: frame begin/end + geometry emission.
+ *
+ * VIEW.C brackets View3dDrawView() with FrameBegin/FrameEnd. The 3D_VIEW.C
+ * BSP walk runs as normal (still software-rasterizing for now -- see rave-7)
+ * and, per visible wall, calls RaveViewEmitQuad() with the corners it already
+ * projected. FrameBegin opens the render + clear; FrameEnd finishes it.
+ *-------------------------------------------------------------------------*/
+T_void RaveViewFrameBegin(T_void)
 {
-    T_sword16 x, y ;
-    T_sword32 height ;
-    T_word16  angle ;
-
     if (G_raveContext == NULL)
-        return ;                        /* caller falls back to software */
+        return ;
 
-    View3dGetView(&x, &y, &height, &angle) ;   /* current camera */
-
-    /* rave-4: background clear color must be set before QARenderStart, which
-       (with a NULL initial context) clears the color + Z buffers. */
+    /* rave-4: background must be set before QARenderStart, which (NULL initial
+       context) clears the color + Z buffers to it. */
     IRaveSetBackground(G_raveContext) ;
-
     QARenderStart(G_raveContext, NULL, NULL) ;
-
-    /* rave-4: (re)establish the depth/texture/blend render state for the frame. */
     IRaveSetRenderState(G_raveContext) ;
+}
 
-    /* TODO(rave-5): traverse the visible set. Reuse 3D_VIEW.C's portal/sector
-       walk (the PVS the software renderer already computes) and, for each
-       visible surface, look up its texture with IRaveGetTexture() (rave-2,
-       done) and emit two TQAVertex triangles:
-         - walls:   quad(main/upper/lower) -> textured (+gouraud from sector
-                    light) via QADrawTriGouraud / QADrawTriMesh
-         - floors/ceilings: sector polygon fan, textured + gouraud
-       Screen-space X/Y come from the same projection; texture coords from the
-       side/sector texture mapping; the cached TQATexture from rave-2. */
-
-    /* TODO(rave-6): draw sprites/objects (ObjectsUpdateAnimation set) as
-       textured, alpha-tested billboard quads. */
+T_void RaveViewFrameEnd(T_void)
+{
+    if (G_raveContext == NULL)
+        return ;
 
     QARenderEnd(G_raveContext, NULL) ;
 
-    /* TODO(rave-7): present -- swap/blit the RAVE context into the classic
-       screen's VIEW3D rectangle so ViewDraw()'s subsequent overhead-map +
-       overlay + UI composite (on GRAPHICS_ACTUAL_SCREEN) still layer on top.
-       This is also where the final on-screen placement of the rave-1 rect
-       (the ResScale window offset) is resolved. */
+    /* TODO(rave-7): present -- composite the RAVE context into the classic
+       screen's VIEW3D rectangle (resolving the ResScale window offset) so the
+       overhead-map + overlay + UI still layer on top, and skip the software
+       raster. Until then the RAVE frame renders offscreen and the software
+       renderer's output is what the player sees (no visual change, but the
+       whole RAVE geometry path is exercised on real hardware). */
+}
+
+/* Emit one quad (2 textured, gouraud-lit triangles). Corners: TL, BL, BR, TR.
+   u,v are texel coords -> normalized by the texture size here; light -> the
+   kd_r/g/b modulate factors (kQATextureOp_Modulate, set in rave-4). */
+T_void RaveViewEmitQuad(
+           T_byte8 *p_texture,
+           const T_raveVertex *topLeft,
+           const T_raveVertex *bottomLeft,
+           const T_raveVertex *bottomRight,
+           const T_raveVertex *topRight)
+{
+    TQATexture         *tex ;
+    TQAVTexture         v[4] ;
+    const T_raveVertex *src[4] ;
+    float               invW32, invH ;
+    int                 i ;
+
+    if (G_raveContext == NULL)
+        return ;
+
+    tex = IRaveGetTexture(p_texture) ;
+    if (tex == NULL)
+        return ;                        /* untextured / bad -> skip for now */
+
+    QASetPtr(G_raveContext, kQATag_Texture, tex) ;
+
+    /* Normalize texel u,v to RAVE's 0..1 texture space (values >1 tile). */
+    invW32 = 1.0f / (float)PictureGetWidth(p_texture) ;
+    invH   = 1.0f / (float)PictureGetHeight(p_texture) ;
+
+    src[0] = topLeft ; src[1] = bottomLeft ;
+    src[2] = bottomRight ; src[3] = topRight ;
+
+    for (i = 0 ; i < 4 ; i++) {
+        v[i].x    = src[i]->x ;
+        v[i].y    = src[i]->y ;
+        v[i].z    = src[i]->z ;
+        v[i].invW = src[i]->invW ;
+        /* RAVE wants u/w, v/w; it divides by interpolated invW per pixel. */
+        v[i].uOverW = (src[i]->u * invW32) * src[i]->invW ;
+        v[i].vOverW = (src[i]->v * invH)   * src[i]->invW ;
+        /* Under kQATextureOp_Modulate, r/g/b are ignored; light goes in kd_*. */
+        v[i].r = v[i].g = v[i].b = 0.0f ;
+        v[i].a = 1.0f ;
+        v[i].kd_r = v[i].kd_g = v[i].kd_b = src[i]->light ;
+        v[i].ks_r = v[i].ks_g = v[i].ks_b = 0.0f ;
+    }
+
+    QADrawTriTexture(G_raveContext, &v[0], &v[1], &v[2], kQATriFlags_None) ;
+    QADrawTriTexture(G_raveContext, &v[0], &v[2], &v[3], kQATriFlags_None) ;
 }
 
 E_Boolean RaveViewIsActive(T_void)
@@ -418,9 +462,21 @@ E_Boolean RaveViewIsActive(T_void)
 
 T_void    RaveViewInit(T_void)          {}
 T_void    RaveViewFinish(T_void)        {}
-T_void    RaveViewDrawView(T_void)      {}
+T_void    RaveViewFrameBegin(T_void)    {}
+T_void    RaveViewFrameEnd(T_void)      {}
 T_void    RaveViewFlushTextures(T_void) {}
 E_Boolean RaveViewIsActive(T_void)      { return FALSE ; }
+
+T_void RaveViewEmitQuad(
+           T_byte8 *p_texture,
+           const T_raveVertex *topLeft,
+           const T_raveVertex *bottomLeft,
+           const T_raveVertex *bottomRight,
+           const T_raveVertex *topRight)
+{
+    (void)p_texture ; (void)topLeft ; (void)bottomLeft ;
+    (void)bottomRight ; (void)topRight ;
+}
 
 #endif /* macintosh && AA_RENDERER_RAVE */
 

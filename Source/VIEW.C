@@ -183,13 +183,14 @@ INDICATOR_LIGHT(105, INDICATOR_GREEN) ;
     /* Update object angles to the view */
     ObjectsUpdateAnimation(0) ;
 
-    /* Draw the current 3d view.  On a RAVE build with a live HW context, the */
-    /* RAVE backend renders (and later presents) the view instead of the      */
-    /* software rasterizer; otherwise this falls through to the software path. */
-    if (RaveViewIsActive())
-        RaveViewDrawView() ;
-    else
-        View3dDrawView() ;
+    /* Draw the current 3d view.  On a RAVE build the same BSP/visibility walk */
+    /* inside View3dDrawView also emits its geometry to the RAVE engine        */
+    /* (rave-5), bracketed by FrameBegin/FrameEnd. The software raster still   */
+    /* runs and is what the player sees until rave-7 presents the RAVE frame   */
+    /* and skips it. FrameBegin/End are no-ops off-RAVE / when inactive.       */
+    RaveViewFrameBegin() ;
+    View3dDrawView() ;
+    RaveViewFrameEnd() ;
 INDICATOR_LIGHT(105, INDICATOR_RED) ;
 
 INDICATOR_LIGHT(109, INDICATOR_GREEN) ;
@@ -206,10 +207,8 @@ INDICATOR_LIGHT(109, INDICATOR_GREEN) ;
             (VIEW3D_CLIP_RIGHT-VIEW3D_CLIP_LEFT)/VIEW3D_SCALE - 1,
             (VIEW3D_HEIGHT/VIEW3D_SCALE)-1) ;   /* logical overlay coords */
 
-    /* Display the screen.  The RAVE backend presents its own context, so skip */
-    /* the software blit when it is active.                                     */
-    if (!RaveViewIsActive())
-        View3dDisplayView() ;
+    /* Display the screen. */
+    View3dDisplayView() ;
 
     /* TRUE-HIGHRES: end of the view phase -- everything after this      */
     /* (banner forms, UI feedback) belongs on the classic screen.        */
