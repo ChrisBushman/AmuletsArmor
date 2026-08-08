@@ -32,6 +32,9 @@
     <ClCompile Include="..\..\..\..\Source\3D_COLLI.C">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\..\..\Source\3D_GEO.C">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\..\..\Source\3D_IO.C">
       <Filter>Source Files</Filter>
     </ClCompile>
