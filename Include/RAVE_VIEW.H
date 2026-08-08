@@ -30,6 +30,12 @@ T_void RaveViewFinish(T_void) ;
    View3dDrawView()+View3dDisplayView() when AA_RENDERER_RAVE is defined. */
 T_void RaveViewDrawView(T_void) ;
 
+/* Drop every cached TQATexture. MUST be called whenever the level's texture
+   arrays (G_3d*TextureArray in 3D_IO.C) are freed/reloaded, else the cache
+   keys (pixel pointers) go stale and a reused address returns the wrong
+   texture. Wired into IUnlockPictures() (3D_IO.C) and RaveViewFinish(). */
+T_void RaveViewFlushTextures(T_void) ;
+
 /* TRUE once a usable RAVE engine/context is up (else the caller should fall
    back to the software renderer). */
 E_Boolean RaveViewIsActive(T_void) ;

@@ -30,6 +30,7 @@
 #include "OBJGEN.H"
 #include "PICS.H"
 #include "PROMPT.H"
+#include "RAVE_VIEW.H"   /* RaveViewFlushTextures() -- no-op unless RAVE build */
 #include "ENDIAN_AA.H"
 
 #define OBJECT_TYPE_LIGHT   924
@@ -1358,6 +1359,10 @@ static T_void IUnlockPictures(T_void)
     MemFree(G_3dMainTextureArray) ;
     MemFree(G_3dCeilingTextureArray) ;
     MemFree(G_3dFloorTextureArray) ;
+
+    /* The RAVE texture cache keys off these now-freed pixel pointers; drop it
+       so a reused address can't alias a stale texture. No-op off-RAVE. */
+    RaveViewFlushTextures() ;
 
     DebugEnd() ;
 }
