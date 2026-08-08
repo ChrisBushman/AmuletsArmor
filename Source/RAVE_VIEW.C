@@ -20,9 +20,9 @@
  *  normal game .mcp simply doesn't include this file; the RAVE build variant
  *  adds it + QuickDraw3DLib + QuickDraw3DRAVELib and defines AA_RENDERER_RAVE.
  *
- *  Progress: rave-1 (draw context) + rave-2 (texture upload/cache) DONE.
- *            rave-3..7 (teardown detail, render state, geometry, sprites,
- *            present) still TODO.
+ *  Progress: rave-1 (draw context) + rave-2 (texture upload/cache) +
+ *            rave-3 (teardown) + rave-4 (render state) DONE.
+ *            rave-5..7 (geometry emission, sprites, present) still TODO.
  *
  *<!-----------------------------------------------------------------------*/
 #include "RAVE_VIEW.H"
@@ -289,7 +289,68 @@ T_void RaveViewFlushTextures(T_void)
 }
 
 /*-------------------------------------------------------------------------*
- * rave-3 (partial): teardown.
+ * rave-4: render state.
+ *
+ * RAVE context state variables persist for the life of the context, but we
+ * (re)establish them every frame so the pipeline is robust to any driver that
+ * resets defaults at QARenderStart, at negligible cost (~10 QASet calls).
+ * kQATag_ColorBG_* MUST be set BEFORE QARenderStart -- that is when the
+ * NULL-initialContext render clears the color/Z buffers -- so it lives in its
+ * own helper; the rest are set right after QARenderStart, before any draw.
+ *-------------------------------------------------------------------------*/
+
+/* Background: clear to opaque black each frame. (rave-5 may later paint a sky
+   into ceiling sectors instead of relying on the clear.) */
+static T_void IRaveSetBackground(TQADrawContext *ctx)
+{
+    QASetFloat(ctx, kQATag_ColorBG_a, 1.0f) ;
+    QASetFloat(ctx, kQATag_ColorBG_r, 0.0f) ;
+    QASetFloat(ctx, kQATag_ColorBG_g, 0.0f) ;
+    QASetFloat(ctx, kQATag_ColorBG_b, 0.0f) ;
+}
+
+static T_void IRaveSetRenderState(TQADrawContext *ctx)
+{
+    /* Depth: standard z-buffer -- nearer (smaller z) wins, and write z so
+       later triangles are occluded. AA's world is a full portal scene, so we
+       want real hidden-surface removal (the ATI engine accelerates ZSort). */
+    QASetInt(ctx, kQATag_ZFunction,   kQAZFunction_LT) ;
+    QASetInt(ctx, kQATag_ZBufferMask, kQAZBufferMask_Enable) ;
+
+    /* Use z (not 1/w) for HSR; texture perspective-correctness comes from the
+       per-vertex w/invW that rave-5 supplies, independent of this. */
+    QASetInt(ctx, kQATag_PerspectiveZ, kQAPerspectiveZ_Off) ;
+
+    /* Best filtering -- the probe confirmed the Rage LT Pro HW-accelerates
+       TextureHQ. (Switch to kQATextureFilter_Fast for the crisp, unfiltered
+       classic-pixel look if that reads better on hardware.) */
+    QASetInt(ctx, kQATag_TextureFilter, kQATextureFilter_Best) ;
+
+    /* Modulate the texture by the per-vertex diffuse color so rave-5's gouraud
+       sector lighting darkens/brightens the texels. */
+    QASetInt(ctx, kQATag_TextureOp, kQATextureOp_Modulate) ;
+
+    /* Alpha-test cutout: our ARGB16 textures put alpha=0 on palette index 0
+       (AA's transparent color) and alpha=1 on everything else, so "draw where
+       alpha > 0.5" discards exactly the masked texels for solid AND masked
+       surfaces alike -- crisp, no blend cost. Translucent surfaces (rave-5/6)
+       layer real blending on top of this. */
+    QASetInt(ctx,   kQATag_AlphaTestFunc, kQAAlphaTest_GT) ;
+    QASetFloat(ctx, kQATag_AlphaTestRef,  0.5f) ;
+
+    /* Interpolate blending (src-over-dst by alpha) is the default for the
+       translucent draws rave-5/6 will flag per-primitive; opaque draws pass
+       kQATriFlags_None and ignore it. Write all color channels. */
+    QASetInt(ctx, kQATag_Blend,       kQABlend_Interpolate) ;
+    QASetInt(ctx, kQATag_ChannelMask,
+             kQAChannelMask_r | kQAChannelMask_g |
+             kQAChannelMask_b | kQAChannelMask_a) ;
+}
+
+/*-------------------------------------------------------------------------*
+ * rave-3: teardown (complete). Drop textures, delete the context, dispose
+ * the clip region, forget the engine. Safe to call when nothing is up
+ * (RaveViewInit calls it to be idempotent).
  *-------------------------------------------------------------------------*/
 T_void RaveViewFinish(T_void)
 {
@@ -317,11 +378,14 @@ T_void RaveViewDrawView(T_void)
 
     View3dGetView(&x, &y, &height, &angle) ;   /* current camera */
 
+    /* rave-4: background clear color must be set before QARenderStart, which
+       (with a NULL initial context) clears the color + Z buffers. */
+    IRaveSetBackground(G_raveContext) ;
+
     QARenderStart(G_raveContext, NULL, NULL) ;
 
-    /* TODO(rave-4): set render state -- Z buffering (kQATag_ZFunction),
-       perspective-correct + HQ (trilinear) texturing, blend mode for
-       translucent walls/objects. */
+    /* rave-4: (re)establish the depth/texture/blend render state for the frame. */
+    IRaveSetRenderState(G_raveContext) ;
 
     /* TODO(rave-5): traverse the visible set. Reuse 3D_VIEW.C's portal/sector
        walk (the PVS the software renderer already computes) and, for each
