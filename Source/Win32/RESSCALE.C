@@ -815,10 +815,12 @@ static void ResScaleRaveComposite(void)
         return ;
 
     /* On-screen rect of the CURRENT (possibly menu-shrunk) view, in G_real
-       window pixels. The view's left edge in the logical frame is the base
-       origin (scaled) plus the clip offset viewX; width follows the clip. */
-    x0 = G_dstX + (int)(((long)fr.overlayOrgX * G_dstW) / RAVE_BASE_W)
-               + (int)(((long)fr.viewX * G_dstW) / G_logicalW) ;
+       window pixels. The view is ALWAYS left-anchored at the base origin (4,3)
+       -- View3dClipCenter centers the clip in the buffer but the renderer
+       left-aligns the visible content (G_doublePtrLookup -= CLIP_LEFT), so the
+       destination gets NO viewX shift; viewX only offsets the SOURCE read
+       (below) to pick the centered visible columns. Width follows the clip. */
+    x0 = G_dstX + (int)(((long)fr.overlayOrgX * G_dstW) / RAVE_BASE_W) ;
     y0 = G_dstY + (int)(((long)fr.overlayOrgY * G_dstH) / RAVE_BASE_H) ;
     rw = (int)(((long)fr.viewW * G_dstW) / G_logicalW) ;
     rh = (int)(((long)fr.viewH * G_dstH) / G_logicalH) ;

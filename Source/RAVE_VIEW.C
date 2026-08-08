@@ -633,7 +633,7 @@ E_Boolean RaveViewGetFrame(T_raveFrame *out)
     out->viewX       = (T_word16)clipL ;
     out->viewW       = (T_word16)(clipR - clipL) ;
     out->viewH       = G_raveFrameH ;
-    out->flipY       = 1 ;   /* RAVE back-buffer read-back is bottom-up */
+    out->flipY       = 0 ;   /* read-back is top-up (confirmed on hardware) */
     out->overlay     = (T_byte8 *)View3dGetOverlayScreen() ;
     out->overlayW    = 320 ; /* overlay layer is base 320x200 (3D_VIEW.C) */
     out->overlayH    = 200 ;
