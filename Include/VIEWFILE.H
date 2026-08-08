@@ -28,23 +28,44 @@ typedef enum {
 
 #define MAX_BODY_PARTS     BODY_PART_LOCATION_UNKNOWN
 
+#if defined(__MWERKS__)
+#pragma options align=packed
+#endif
 typedef struct  {
     T_byte8 signature[4]     PACK;
     T_word32 numEntries      PACK;
     T_word32 foffset         PACK;
 } T_wadHeader ;
+#if defined(__MWERKS__)
+#pragma options align=reset
+#endif
 
+#if defined(__MWERKS__)
+#pragma options align=packed
+#endif
 typedef struct  {
     T_word32 foffset         PACK;
     T_word32 size            PACK;
     T_byte8 name[8]          PACK;
 } T_directoryEntry ;
+#if defined(__MWERKS__)
+#pragma options align=reset
+#endif
 
+#if defined(__MWERKS__)
+#pragma options align=packed
+#endif
 typedef struct  {
     T_sword16 x              PACK;
     T_sword16 y              PACK;
 } T_3dVertex ;
+#if defined(__MWERKS__)
+#pragma options align=reset
+#endif
 
+#if defined(__MWERKS__)
+#pragma options align=packed
+#endif
 typedef struct  {
     T_sword16 from           PACK;
     T_sword16 to             PACK;
@@ -53,7 +74,13 @@ typedef struct  {
     T_sword16 tag            PACK;
     T_sword16 side[2]        PACK;
 } T_3dLine ;
+#if defined(__MWERKS__)
+#pragma options align=reset
+#endif
 
+#if defined(__MWERKS__)
+#pragma options align=packed
+#endif
 typedef struct  {
     T_sword16 tmXoffset      PACK;
     T_sword16 tmYoffset      PACK;
@@ -62,7 +89,13 @@ typedef struct  {
     T_byte8   mainTx[8]      PACK;
     T_word16  sector         PACK;
 } T_3dSide ;
+#if defined(__MWERKS__)
+#pragma options align=reset
+#endif
 
+#if defined(__MWERKS__)
+#pragma options align=packed
+#endif
 typedef struct  {
     T_sword16   floorHt      PACK;
     T_sword16   ceilingHt    PACK;
@@ -72,6 +105,9 @@ typedef struct  {
     T_sword16   type         PACK;
     T_sword16   trigger      PACK;
 } T_3dSector ;
+#if defined(__MWERKS__)
+#pragma options align=reset
+#endif
 
 typedef T_byte8 T_sectorType ;
 #define SECTOR_TYPE_DIRT         1
@@ -135,6 +171,9 @@ typedef struct {
 #define SECTOR_LIGHT_ANIM_MIMIC     4
 
 
+#if defined(__MWERKS__)
+#pragma options align=packed
+#endif
 typedef struct  {
     T_sword16 from           PACK;
     T_sword16 to             PACK;
@@ -143,12 +182,24 @@ typedef struct  {
     T_sword16 lineSide       PACK;
     T_sword16 lineOffset     PACK;
 } T_3dSegment ;
+#if defined(__MWERKS__)
+#pragma options align=reset
+#endif
 
+#if defined(__MWERKS__)
+#pragma options align=packed
+#endif
 typedef struct  {
     T_sword16 numSegs        PACK;
     T_sword16 firstSeg       PACK;
 } T_3dSegmentSector ;
+#if defined(__MWERKS__)
+#pragma options align=reset
+#endif
 
+#if defined(__MWERKS__)
+#pragma options align=packed
+#endif
 typedef struct  {
     T_sword16 x              PACK;
     T_sword16 y              PACK;
@@ -165,7 +216,13 @@ typedef struct  {
     T_word16 right           PACK;
     T_word16 left            PACK;
 } T_3dNode ;
+#if defined(__MWERKS__)
+#pragma options align=reset
+#endif
 
+#if defined(__MWERKS__)
+#pragma options align=packed
+#endif
 typedef struct  {
     T_sword16 x              PACK;
     T_sword16 y              PACK;
@@ -173,6 +230,9 @@ typedef struct  {
     T_sword16 objectType     PACK;
     T_sword16 attributes     PACK;
 } T_3dObjectInFile ;
+#if defined(__MWERKS__)
+#pragma options align=reset
+#endif
 
 /*
 typedef struct  {
@@ -234,6 +294,9 @@ typedef struct T_3dObject_ {
     T_word16 objCollisionGroup ;
 } T_3dObject ;
 
+#if defined(__MWERKS__)
+#pragma options align=packed
+#endif
 typedef struct  {
     T_sword16 xOrigin        PACK;
     T_sword16 yOrigin        PACK;
@@ -247,6 +310,9 @@ typedef struct  {
     T_word16 blockIndexes[];
 #endif
 } T_3dBlockMapHeader ;
+#if defined(__MWERKS__)
+#pragma options align=reset
+#endif
 
 typedef T_sword16 T_3dBlockMap ;
 

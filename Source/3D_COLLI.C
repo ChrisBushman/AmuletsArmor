@@ -136,7 +136,7 @@ static E_Boolean IIsOnLeftOfLine(
                      T_sword32 lineX2,
                      T_sword32 lineY2) ;
 
-E_Boolean MoveTo(
+E_Boolean MoveObjectTo(
               T_sword32 oldX,
               T_sword32 oldY,
               T_sword32 newX,
@@ -1801,8 +1801,8 @@ T_sword16 IMoveToXYWithStep(
 //    G_numSurroundingSectors = 0 ;
 
 //printf("xy: f: %d h: %d\n", foot>>16, head>>16) ;
-//    while (/* (count < 3) && */ (MoveTo(*oldX, *oldY, newX, newY, step, radius, foot, head, height, p_obj) == TRUE))  {
-    while (/* (count < 3) && */ (MoveTo(*oldX, *oldY, newX, newY, step, p_obj) == TRUE))  {
+//    while (/* (count < 3) && */ (MoveObjectTo(*oldX, *oldY, newX, newY, step, radius, foot, head, height, p_obj) == TRUE))  {
+    while (/* (count < 3) && */ (MoveObjectTo(*oldX, *oldY, newX, newY, step, p_obj) == TRUE))  {
 //printf("--xy: f: %d h: %d\n", foot>>16, head>>16) ;
 //printf("***************** count = %d\n", count) ;
         /* Compute the radial box around the origin. */
@@ -2701,10 +2701,10 @@ T_sword32 Mult32x32AndCompare(
 #endif
 
 /*-------------------------------------------------------------------------*
- * Routine:  MoveTo
+ * Routine:  MoveObjectTo
  *-------------------------------------------------------------------------*/
 /**
- *  MoveTo takes a given object and tries to move it to another
+ *  MoveObjectTo takes a given object and tries to move it to another
  *  location.  If a collision is detected, a flag is returned and the
  *  global variables are filled with additional information.
  *
@@ -2718,7 +2718,7 @@ T_sword32 Mult32x32AndCompare(
  *  @return TRUE=collision
  *
  *<!-----------------------------------------------------------------------*/
-E_Boolean MoveTo(
+E_Boolean MoveObjectTo(
          T_sword32 oldX,
          T_sword32 oldY,
          T_sword32 newX,
@@ -2792,7 +2792,7 @@ E_Boolean MoveTo(
                 ObjectGetHeight(p_obj),
                 G_numSurroundingSectors,
                 G_surroundingSectors) == FALSE)  {
-//puts("MoveTo:  Can't squeeze") ;
+//puts("MoveObjectTo:  Can't squeeze") ;
             return TRUE ;
         }
     } else {
@@ -2804,11 +2804,11 @@ E_Boolean MoveTo(
         step = distance >> 1 ;
 
         /* Check first half of line. */
-        if (MoveTo(oldX, oldY, halfX, halfY, step, p_obj) == TRUE)
+        if (MoveObjectTo(oldX, oldY, halfX, halfY, step, p_obj) == TRUE)
             return TRUE ;
 
         /* Check second half of line. */
-        if (MoveTo(halfX, halfY, newX, newY, distance-step, p_obj) == TRUE)
+        if (MoveObjectTo(halfX, halfY, newX, newY, distance-step, p_obj) == TRUE)
             return TRUE ;
     }
 

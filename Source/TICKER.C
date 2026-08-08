@@ -427,6 +427,24 @@ T_void TickerContinue(T_void)
 {
     /* Sub one from the pause level. */
     G_pauseLevel-- ;
+
+    /* On the final un-pause, DISCARD the real time that elapsed while paused
+       rather than letting the next TickerUpdate() fold the whole paused span
+       into G_tickMilli in one jump. TickerPause() is used to bracket long
+       blocking work (level loads: MapLoad; disk resource loads: ResourceLock)
+       precisely so game time doesn't advance across it -- but the deferred
+       catch-up defeated that. On slow hardware (real OS 9) a multi-second
+       level load made TickerGet() jump on resume, which pushed
+       IPXGetTicksSinceLastRecv() past the 10s net-disconnect threshold and
+       bounced the player out right as the 3D view was loading
+       (CONNECT->CHOOSE_CHARACTER->PLAY_GAME->DISCONNECTED cycle). It also
+       would have fast-forwarded animations/physics by the load duration on
+       the first post-load frame. Rebasing the millisecond origin here keeps
+       game time continuous across the pause. */
+    if (G_pauseLevel <= 0) {
+        G_pauseLevel = 0 ;
+        G_lastMillisecondCount = SDL_GetTicks() ;
+    }
 }
 #endif
 

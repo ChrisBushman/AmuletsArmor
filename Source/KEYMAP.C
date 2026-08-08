@@ -29,6 +29,14 @@ static E_Boolean G_init = FALSE ;     /* Flag to determine if init'd */
  *  @param iniFile -- .ini file with keyboard group
  *
  *<!-----------------------------------------------------------------------*/
+/* OS 9 bring-up boot tracer (see AABuild/aa_os9_compat.c). No-op elsewhere. */
+#ifdef macintosh
+extern void AA_BootLog(const char *);
+#define AA_BOOT(m) AA_BootLog(m)
+#else
+#define AA_BOOT(m) ((void)0)
+#endif
+
 T_void KeyMapInitialize(T_iniFile iniFile)
 {
     T_word16 i, j ;
@@ -61,6 +69,7 @@ T_void KeyMapInitialize(T_iniFile iniFile)
             j+=2 ;
         }
     }
+    AA_BOOT("km1 keys1 done");
     buffer = INIFileGet(iniFile, "keyboard", "keys2") ;
     if (buffer)  {
         len = strlen(buffer);

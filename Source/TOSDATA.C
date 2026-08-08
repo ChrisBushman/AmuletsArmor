@@ -35,7 +35,7 @@ void main(void)
     int part = 0 ;
     int subpart = 0 ;
 
-    fp = fopen("layers.dat", "r") ;
+    fp = fopen("layers.dat", "rb") ;
     if (fp == NULL)  {
         puts("Cannot open file LAYERS.DAT!") ;
         exit(1) ;

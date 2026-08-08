@@ -89,6 +89,34 @@ static T_void IINIFilePutAlways(
  *  @return Handle to ini file
  *
  *<!-----------------------------------------------------------------------*/
+/* OS 9 bring-up boot tracer (see AABuild/aa_os9_compat.c). No-op elsewhere. */
+#ifdef macintosh
+extern void AA_BootLog(const char *);
+#define AA_BOOT(m) AA_BootLog(m)
+#else
+#define AA_BOOT(m) ((void)0)
+#endif
+
+#if defined(macintosh)
+/* Open a subdirectory INI whose name uses Unix '/' separators, by rewriting
+   it to a classic-Mac relative path (":dir:file").  Kept out-of-line so the
+   256-byte path buffer stays out of INIFileOpen's own (deep, parse-loop)
+   stack frame for the common root-level case. */
+static FILE *IIniFopenMacSubpath(T_byte8 *p_filename)
+{
+    T_byte8 macPath[256] ;
+    T_word16 i = 0, j = 0 ;
+
+    macPath[j++] = ':' ;
+    while (p_filename[i] != '\0' && j < 255) {
+        macPath[j++] = (p_filename[i] == '/') ? ':' : p_filename[i] ;
+        i++ ;
+    }
+    macPath[j] = '\0' ;
+    return fopen((char *)macPath, "rb") ;
+}
+#endif
+
 T_iniFile INIFileOpen(T_byte8 *p_filename)
 {
     T_iniFile iniFile = INIFILE_BAD ;
@@ -104,7 +132,25 @@ T_iniFile INIFileOpen(T_byte8 *p_filename)
     category[0] = '\0' ;
 
     /* Open the .ini file */
-    fp = fopen(p_filename, "r") ;
+    /* Binary, not text: classic-Mac MSL's text-mode fgets mishandles this
+       LF-terminated .ini (splits long lines mid-read, faults at EOF). The
+       loop below already strips \n / \r / \r\n itself, so raw bytes are fine
+       on every platform. */
+#if defined(macintosh)
+    /* Classic Mac uses ':' as its path separator; '/' is an ordinary filename
+       character.  Quest/adventure INIs live in a subdirectory (e.g.
+       "MAPDESC/QUEST0.INI"), so without translation fopen looks for one
+       literal file and fails -- which left the town's quest list blank even
+       though the files exist.  Translate only when a '/' is present (via a
+       helper so the common root-file path keeps its original small stack
+       frame); root-level names like config.ini pass straight through. */
+    if (strchr((char *)p_filename, '/') != NULL)
+        fp = IIniFopenMacSubpath(p_filename) ;
+    else
+        fp = fopen((char *)p_filename, "rb") ;
+#else
+    fp = fopen(p_filename, "rb") ;
+#endif
 //    DebugCheck(fp != NULL) ;
 
     /* Allocate memory for the handle. */
@@ -115,27 +161,41 @@ T_iniFile INIFileOpen(T_byte8 *p_filename)
     if (/* (fp != NULL) && */(p_ini != NULL))  {
         p_ini->tag = INIFILE_TAG ;
         p_ini->categoryList = DoubleLinkListCreate() ;
+        AA_BOOT("io1 alloc+list ok");
 
         if (fp != NULL)  {
+            AA_BOOT("io2 file open, parsing");
             while (!feof(fp))  {
                 buffer[0] = '\0' ;
 #ifdef TARGET_UNIX
-                if (fgets(buffer, sizeof(buffer), fp) == NULL)
-                    break ;
-
                 {
-                    T_word16 lineLen ;
+                    /* Read one line terminated by '\r' (classic Mac), '\n'
+                       (Unix), or '\r\n'.  fgets() only breaks on '\n', so a
+                       CR-only file -- which classic Mac OS produces whenever it
+                       rewrites this .ini in text mode -- would be read as one
+                       giant line and misparsed (splitting long values, faulting
+                       near EOF).  Reading char-by-char handles every ending. */
+                    int ch = EOF ;
+                    T_word16 len = 0 ;
 
-                    lineLen = strlen(buffer) ;
-                    if (lineLen == 0)
-                        continue ;
-
-                    if (buffer[lineLen-1] == '\n' || buffer[lineLen-1] == '\r') {
-                        buffer[--lineLen] = '\0' ;
-                        if (lineLen > 0 && buffer[lineLen-1] == '\r')
-                            buffer[lineLen-1] = '\0' ;
+                    while (len < (T_word16)(sizeof(buffer) - 1)) {
+                        ch = fgetc(fp) ;
+                        if (ch == EOF || ch == '\n')
+                            break ;
+                        if (ch == '\r') {
+                            int nxt = fgetc(fp) ;
+                            if (nxt != '\n' && nxt != EOF)
+                                ungetc(nxt, fp) ;
+                            break ;
+                        }
+                        buffer[len++] = (T_byte8)ch ;
                     }
+                    buffer[len] = '\0' ;
 
+                    if (ch == EOF && len == 0) {
+                        AA_BOOT("io-EOF break");
+                        break ;
+                    }
                     if (buffer[0] == '\0')
                         continue ;
                 }
@@ -149,6 +209,7 @@ T_iniFile INIFileOpen(T_byte8 *p_filename)
 
                 buffer[strlen(buffer)-1] = '\0' ;
 #endif
+                AA_BOOT(buffer);          /* the line about to be processed */
 
                 if (isalnum(buffer[0]))  {
                     /* Break it up into two parts, */
@@ -172,8 +233,10 @@ T_iniFile INIFileOpen(T_byte8 *p_filename)
                     if (IFindCategory(p_ini, category) == NULL)
                         ICreateCategory(p_ini, category) ;
                 }
+                AA_BOOT("  processed");   /* line handled; loops back for next */
             }
         }
+        AA_BOOT("io3 parse done");
 
         /* Note that no changes have occured (yet) */
         IMarkClean(p_ini) ;
@@ -222,7 +285,7 @@ T_void INIFileClose(T_byte8 *p_filename, T_iniFile iniFile)
         /* to save out that change. */
 
         /* Open up a file to save this to. */
-        fp = fopen(p_filename, "w") ;
+        fp = fopen(p_filename, "wb") ;
 
         /* Save out each category in order that we found them. */
         elementCat = DoubleLinkListGetFirst(p_ini->categoryList) ;

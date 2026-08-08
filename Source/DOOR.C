@@ -133,7 +133,7 @@ T_void DoorLoad(T_word32 mapNumber)
 #if 0
     /* Create the appropriate filename and try to open. */
     sprintf(filename, "l%ld.dor", mapNumber) ;
-    fp = fopen(filename, "r") ;
+    fp = fopen(filename, "rb") ;
     if (fp != NULL)  {
         /* If it is opened, get the number of doors found. */
         fscanf(fp, "%d", &numDoors) ;

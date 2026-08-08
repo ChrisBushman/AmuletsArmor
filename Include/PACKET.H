@@ -17,6 +17,9 @@
 
 #define MAX_MESSAGE_LEN      40
 
+#if defined(__MWERKS__)
+#pragma options align=packed
+#endif
 typedef struct {
     T_byte8    prefix            PACK;
     T_byte8    packetLength      PACK;
@@ -24,23 +27,44 @@ typedef struct {
     T_directTalkUniqueAddress sender PACK;
     T_word16   checksum          PACK;
 } T_packetHeader ;
+#if defined(__MWERKS__)
+#pragma options align=reset
+#endif
 
+#if defined(__MWERKS__)
+#pragma options align=packed
+#endif
 typedef struct {
     T_packetHeader header        PACK;
     T_byte8        data[SHORT_PACKET_LENGTH]
                                  PACK;
 } T_packetShort ;
+#if defined(__MWERKS__)
+#pragma options align=reset
+#endif
 
+#if defined(__MWERKS__)
+#pragma options align=packed
+#endif
 typedef struct {
     T_packetHeader header        PACK;
     T_byte8        data[LONG_PACKET_LENGTH]
                                  PACK;
 } T_packetLong ;
+#if defined(__MWERKS__)
+#pragma options align=reset
+#endif
 
+#if defined(__MWERKS__)
+#pragma options align=packed
+#endif
 typedef struct {
     T_packetHeader header        PACK;
     T_byte8        data[LONG_PACKET_LENGTH]       PACK;
 } T_packetEitherShortOrLong ;
+#if defined(__MWERKS__)
+#pragma options align=reset
+#endif
 
 T_sword16 PacketSendShort(T_packetShort *p_shortPacket) ;
 
@@ -59,18 +83,33 @@ T_void PacketSetId (T_packetEitherShortOrLong *p_packet, T_word32 packetID);
 T_void PacketReceiveData(T_void *p_data, T_word16 size);
 
 /* !!! Needs to be moved! */
+#if defined(__MWERKS__)
+#pragma options align=packed
+#endif
 typedef struct {
     T_byte8 command              PACK;
     T_word16 player              PACK;
     T_word16 objectId            PACK;
 } T_logoffPacket ;
+#if defined(__MWERKS__)
+#pragma options align=reset
+#endif
 
+#if defined(__MWERKS__)
+#pragma options align=packed
+#endif
 typedef struct {
     T_byte8 command              PACK ;
     T_gameGroupID groupID        PACK ;
     T_byte8 syncData[1]          PACK ;
 } T_syncPacket ;
+#if defined(__MWERKS__)
+#pragma options align=reset
+#endif
 
+#if defined(__MWERKS__)
+#pragma options align=packed
+#endif
 typedef struct {
     T_byte8 command              PACK;
     T_word16 player              PACK;
@@ -78,7 +117,13 @@ typedef struct {
     T_byte8 message[MAX_MESSAGE_LEN+1]
                                  PACK;
 } T_messagePacket ;
+#if defined(__MWERKS__)
+#pragma options align=reset
+#endif
 
+#if defined(__MWERKS__)
+#pragma options align=packed
+#endif
 typedef struct {
     T_byte8 command              PACK ;
     T_word16 loginId             PACK ;
@@ -87,6 +132,9 @@ typedef struct {
     T_sword16 yPos               PACK ;
     T_byte8 angle                PACK ;
 } T_placeStartPacket ;
+#if defined(__MWERKS__)
+#pragma options align=reset
+#endif
 
 /* ------------------------------------------------------------------------ */
 
@@ -109,6 +157,9 @@ typedef T_byte8 E_changePasswordStatus ;
 
 /* ------------------------------------------------------------------------ */
 
+#if defined(__MWERKS__)
+#pragma options align=packed
+#endif
 typedef struct {
     T_byte8 command              PACK ;
     T_byte8 fromPlayer            PACK ;
@@ -116,15 +167,24 @@ typedef struct {
     T_byte8 transmitStart         PACK ;
     T_gameGroupID groupID         PACK ;
 } T_retransmitPacket ;
+#if defined(__MWERKS__)
+#pragma options align=reset
+#endif
 
 /* ------------------------------------------------------------------------ */
 
 /* Packet for town ui messages. */
+#if defined(__MWERKS__)
+#pragma options align=packed
+#endif
 typedef struct {
     T_byte8 command               PACK ;
     T_byte8 name[30]               PACK ;
     T_byte8 msg[40]                PACK ;
 } T_townUIMessagePacket ;
+#if defined(__MWERKS__)
+#pragma options align=reset
+#endif
 
 /* ------------------------------------------------------------------------ */
 
@@ -141,6 +201,9 @@ typedef T_byte8 T_playerIDState ;
 #define PLAYER_ID_STATE_JOINING_GAME         2
 #define PLAYER_ID_STATE_UNKNOWN              3
 
+#if defined(__MWERKS__)
+#pragma options align=packed
+#endif
 typedef struct { //50 bytes
     T_byte8 name[30]                      PACK ;
     T_directTalkUniqueAddress uniqueAddress PACK ;
@@ -152,20 +215,35 @@ typedef struct { //50 bytes
 	T_byte8 classType                       PACK ;
 	T_byte8 level                           PACK ;
 } T_playerIDSelf ;
+#if defined(__MWERKS__)
+#pragma options align=reset
+#endif
 
+#if defined(__MWERKS__)
+#pragma options align=packed
+#endif
 typedef struct {
     T_byte8 command             PACK ;
     T_playerIDSelf id            PACK ;
 } T_playerIDSelfPacket ;
+#if defined(__MWERKS__)
+#pragma options align=reset
+#endif
 
 /* ------------------------------------------------------------------------ */
 
+#if defined(__MWERKS__)
+#pragma options align=packed
+#endif
 typedef struct {
     T_byte8 command                        PACK ;
     T_directTalkUniqueAddress uniqueAddress PACK ;
     T_gameGroupID groupID                   PACK ;
     T_word16 adventure                      PACK ;
 } T_gameRequestJoinPacket ;
+#if defined(__MWERKS__)
+#pragma options align=reset
+#endif
 
 /* ------------------------------------------------------------------------ */
 
@@ -175,6 +253,9 @@ typedef T_byte8 E_respondJoin ;
 #define GAME_RESPOND_JOIN_CANCELED   2
 #define GAME_RESPOND_JOIN_UNKNOWN    3
 
+#if defined(__MWERKS__)
+#pragma options align=packed
+#endif
 typedef struct {
     T_byte8 command                        PACK ;
     T_directTalkUniqueAddress uniqueAddress PACK ;
@@ -182,9 +263,15 @@ typedef struct {
     T_word16 adventure                      PACK ;
     E_respondJoin response                  PACK ;
 } T_gameRespondJoinPacket ;
+#if defined(__MWERKS__)
+#pragma options align=reset
+#endif
 
 /* ------------------------------------------------------------------------ */
 
+#if defined(__MWERKS__)
+#pragma options align=packed
+#endif
 typedef struct {
     T_byte8 command                  PACK ;
     T_gameGroupID groupID             PACK ;
@@ -194,14 +281,23 @@ typedef struct {
     T_word32 timeOfDay                PACK ;
     T_word16 firstLevel               PACK ;
 } T_gameStartPacket ;
+#if defined(__MWERKS__)
+#pragma options align=reset
+#endif
 
 /* ------------------------------------------------------------------------ */
 
+#if defined(__MWERKS__)
+#pragma options align=packed
+#endif
 typedef struct {
 	T_byte8 command                PACK;
 	T_byte8 commandBeingAcked      PACK;
 	T_word32 packetIDBeingAcked    PACK;
 } T_ackPacket;
+#if defined(__MWERKS__)
+#pragma options align=reset
+#endif
 
 #endif
 

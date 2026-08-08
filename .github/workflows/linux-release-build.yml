@@ -6,6 +6,13 @@ name: Linux release build
 # `gh workflow run linux-release-build.yml`.
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish the asset to (blank = build a CI artifact only, don't publish)"
+        required: false
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -54,3 +61,9 @@ jobs:
           name: AmuletsArmor-Linux
           path: AmuletsArmor-Linux.tar.gz
           if-no-files-found: error
+
+      - name: Publish to release
+        if: ${{ inputs.tag != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ inputs.tag }}" AmuletsArmor-Linux.tar.gz --clobber

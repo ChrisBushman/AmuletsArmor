@@ -96,6 +96,9 @@ typedef T_word16 E_objectAnimateType;
  *      the list of frames that make up this stance.
  *
  *<!-----------------------------------------------------------------------*/
+#if defined(__MWERKS__)
+#pragma options align=packed
+#endif
 typedef struct {
     T_word16             numFrames          PACK ;
     T_word16             speed              PACK ;
@@ -103,6 +106,9 @@ typedef struct {
     T_word16             nextStance         PACK ;
     T_word16             offsetFrameList    PACK ;
 } T_objectStance ;
+#if defined(__MWERKS__)
+#pragma options align=reset
+#endif
 
 /*-------------------------------------------------------------------------*
  * Typedef:  T_objectFrame
@@ -132,6 +138,9 @@ typedef struct {
    inconsistency, every direct ->offsetPicList / ->soundNum /
    ->soundRadius / ->objectAttributes access in this file goes through
    the Get/Set macros below instead of trusting the attribute. */
+#if defined(__MWERKS__)
+#pragma options align=packed
+#endif
 typedef struct {
     T_byte8 numAngles                       PACK ;
     T_word16 offsetPicList                  PACK ;
@@ -139,6 +148,9 @@ typedef struct {
     T_word16 soundRadius                    PACK ;
     T_word16 objectAttributes               PACK ;
 } PACK_STRUCT T_objectFrame ;
+#if defined(__MWERKS__)
+#pragma options align=reset
+#endif
 
 #define ObjFrameGetOffsetPicList(p_frame)      (AlignedGetW16(&(p_frame)->offsetPicList))
 #define ObjFrameSetOffsetPicList(p_frame, v)   (AlignedSetW16(&(p_frame)->offsetPicList, (v)))
@@ -184,11 +196,17 @@ typedef struct {
    T_resourceEntryDisk32 fix addresses also applies here, and native
    Windows built with GCC/mingw needs it just as much as Linux/macOS. */
 #if defined(TARGET_UNIX) || defined(__GNUC__)
+#if defined(__MWERKS__)
+#pragma options align=packed
+#endif
 typedef struct {
     T_sword16 number                          PACK ;
     T_word32 resource32                       PACK ;
     T_word32 p_pic32                          PACK ;
 } T_objectPicDisk32 ;
+#if defined(__MWERKS__)
+#pragma options align=reset
+#endif
 #endif
 
 /*-------------------------------------------------------------------------*
@@ -216,6 +234,9 @@ typedef struct {
    strict-alignment targets (e.g. the SGI O2/MIPS port); PACK_STRUCT
    (see GENERAL.H) fixes this the same way as T_objectFrame above,
    without having to rewrite every access site. */
+#if defined(__MWERKS__)
+#pragma options align=packed
+#endif
 typedef struct {
     T_word16 numStances               PACK ;
     T_word32 lockCount                PACK ;
@@ -228,6 +249,9 @@ typedef struct {
     T_word16 objMoveAttr              PACK ;
     T_objectStance stances[1]         PACK ;
 } PACK_STRUCT T_objectType ;
+#if defined(__MWERKS__)
+#pragma options align=reset
+#endif
 
 #if defined(TARGET_UNIX) || defined(__GNUC__)
 static E_Boolean IObjTypeRangeOk(T_word32 offset, T_word32 sizeNeeded, T_word32 totalSize)

@@ -1,3 +1,11 @@
+#ifdef __MWERKS__
+/* The Mac OS 9 CodeWarrior build forces C compilation globally (its prefix
+   does "#pragma cplusplus off", because AA's uppercase .C sources would
+   otherwise wrongly compile as C++). This file is a real C++ unit
+   (ipx_client is a class) -- flip C++ back on. No-op on other toolchains. */
+#pragma cplusplus on
+#endif
+
 #include <stdio.h>
 #include <string.h>
 #include "ipx_client.h"
@@ -54,9 +62,11 @@ extern void PacketPrint(void *aData, unsigned int aSize);
 
 #define IPXBUFFERSIZE 1424
 
-#ifdef TARGET_UNIX
+#if defined(TARGET_UNIX) && !defined(__MWERKS__)
 #define GCC_ATTRIBUTE(x) __attribute__((x))
 #else
+/* CodeWarrior (and non-GCC) has no __attribute__; the on-wire IPX structs
+   below are instead packed with #pragma options align=packed. */
 #define GCC_ATTRIBUTE(x) /* attribute not supported */
 #endif
 #define GCC_UNLIKELY(x) (x)
@@ -95,6 +105,10 @@ typedef Bit32s MemHandle;
 
 #define LOG_MSG printf
 
+#if defined(__MWERKS__)
+#pragma options align=packed     /* 1-byte pack the on-wire IPX structs (CW's
+                                    equivalent of the GCC_ATTRIBUTE(packed)) */
+#endif
 struct PackedIP {
 	Uint32 host;
 	Uint16 port;
@@ -121,6 +135,9 @@ struct IPXHeader {
 
 	Uint32 counter; //! Special frame counter that is ONLY in A&A.  Used to track order of packets (if order is needed)
 } GCC_ATTRIBUTE(packed);
+#if defined(__MWERKS__)
+#pragma options align=reset      /* end of the packed on-wire IPX structs */
+#endif
 
 struct ipxnetaddr {
 	Uint8 netnum[4];   // Both are big endian
@@ -632,7 +649,24 @@ int IPXSendKeepalive(void)
  * <!-----------------------------------------------------------------------*/
 T_word32 IPXGetTicksSinceLastRecv(void)
 {
-    return TickerGet() - G_lastRecvTick;
+    T_word32 now = TickerGet();
+
+    /* Guard against the tick clock reading *lower* than when G_lastRecvTick
+       was captured. On classic Mac this happens routinely: IPXConnectToServer()
+       arms G_lastRecvTick very early (before TickerOn() has established the
+       ticker's zero point), and there the SDL-backed TickerGet() reports a
+       large value derived from the already-running SDL_GetTicks() clock. Once
+       TickerOn() zeroes G_tickMilli, the main-loop TickerGet() reads far
+       smaller, so this unsigned subtraction would underflow to ~4.29e9 and
+       DirectTalkGetLineStatus() would false-drop the session on the very first
+       tick (observed: "DROP gap=4291010099 recv=0 ka=1"). Re-arm to now and
+       report a fresh 0. Also harmlessly covers a genuine 32-bit tick wrap
+       (~708 days at 70Hz). */
+    if (now < G_lastRecvTick) {
+        G_lastRecvTick = now;
+        return 0;
+    }
+    return now - G_lastRecvTick;
 }
 
 /*--------------------------------------------------------------------------*
@@ -685,9 +719,13 @@ int IPXConnectToServer(const char *strAddr)
         return 0;
     }
 
+#if !defined(macintosh)
+    /* SDLNet_UDP_SetPacketLoss is a debug packet-loss simulator absent from
+       the classic-Mac SDL_net 1.2.5 (native Open Transport) build. */
     if (G_simulatedPacketLossPercent) {
         SDLNet_UDP_SetPacketLoss(ipxClientSocket, G_simulatedPacketLossPercent);
     }
+#endif
 
     // Send registration echo packet to server.  If server doesn't get
     // this, client will not be registered

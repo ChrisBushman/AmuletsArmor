@@ -114,6 +114,9 @@ typedef struct {
    struct non-portable across pointer widths. This record replaces each
    pointer with a fixed 4-byte placeholder (always written 0, ignored on
    read) so the layout is identical on every build. */
+#if defined(__MWERKS__)
+#pragma options align=packed
+#endif
 typedef struct {
     T_word16 locx               PACK;
     T_word16 locy                PACK;
@@ -131,6 +134,9 @@ typedef struct {
     T_equipItemDescription itemdesc PACK;
     T_word32 elementReserved     PACK;
 } T_inventoryItemDiskStruct;
+#if defined(__MWERKS__)
+#pragma options align=reset
+#endif
 
 /* global routine prototypes */
 T_void InventoryInit(T_void);

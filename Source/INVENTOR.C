@@ -69,6 +69,9 @@ static T_word16 G_inventoryBoxCoordinates[EQUIP_NUMBER_OF_LOCATIONS][4];
 
 static E_Boolean G_init = FALSE;
 
+#if defined(__MWERKS__)
+#pragma options align=packed
+#endif
 typedef struct {
     T_byte8 type;
     T_byte8 subtype;
@@ -83,6 +86,9 @@ typedef struct {
 } PACK T_equipItemDescriptionLegacy9;
 #else
 } T_equipItemDescriptionLegacy9;
+#endif
+#if defined(__MWERKS__)
+#pragma options align=reset
 #endif
 
 static T_void IInventoryDecodeItemDesc(

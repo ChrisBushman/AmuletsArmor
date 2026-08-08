@@ -42,6 +42,14 @@ if(UNIX)
     set_source_files_properties(
         "${CMAKE_CURRENT_SOURCE_DIR}/Source/Win32/RESSCALE.C"
         PROPERTIES LANGUAGE C)
+    if(APPLE)
+        # macOS flicker fix: RESSCALE uses borderless windowed-fullscreen here
+        # (real fullscreen makes the display's content-adaptive backlight pulse
+        # dark scenes -- see RESSCALE_MAC.m).  The helper is Objective-C/Cocoa.
+        enable_language(OBJC)
+        list(APPEND AA_PLATFORM_SOURCES
+            "${CMAKE_CURRENT_SOURCE_DIR}/Source/Win32/RESSCALE_MAC.m")
+    endif()
 endif()
 
 add_executable(${AA_EXE_NAME}
@@ -145,6 +153,10 @@ if(UNIX AND NOT APPLE)
 endif()
 
 if(APPLE)
+    # RESSCALE_MAC.m calls into AppKit (NSApp / NSWindow) for the borderless
+    # windowed-fullscreen flicker fix.
+    target_link_libraries(${AA_EXE_NAME} PRIVATE "-framework Cocoa")
+
     # sdl12-compat loads SDL2 dynamically; add Homebrew and pkg-config library
     # directories to the runtime search path so startup does not depend on shell env.
     set(AA_RPATH_DIRS

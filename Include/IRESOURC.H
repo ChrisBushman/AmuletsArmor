@@ -88,12 +88,18 @@ typedef struct {
 
 /* Header that is placed at the beginning of the file to locate */
 /* the resource index. */
+#if defined(__MWERKS__)
+#pragma options align=packed
+#endif
 typedef struct {
     T_word32 uniqueID           PACK;
     T_word32 indexOffset        PACK;
     T_word32 indexSize          PACK; /* Size of index in bytes. */
     T_word16 numEntries         PACK; /* Number of entries in the index. */
 } T_resourceFileHeader ;
+#if defined(__MWERKS__)
+#pragma options align=reset
+#endif
 
 #endif // _IRESOURC_H_
 

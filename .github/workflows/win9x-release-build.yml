@@ -9,6 +9,13 @@ name: Windows 9x release build
 # `gh workflow run win9x-release-build.yml`.
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish the asset to (blank = build a CI artifact only, don't publish)"
+        required: false
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -40,3 +47,9 @@ jobs:
           name: AmuletsArmor-Win9x
           path: AmuletsArmor-Win9x.zip
           if-no-files-found: error
+
+      - name: Publish to release
+        if: ${{ inputs.tag != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ inputs.tag }}" AmuletsArmor-Win9x.zip --clobber

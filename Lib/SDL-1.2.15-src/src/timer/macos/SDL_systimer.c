@@ -36,6 +36,9 @@
 
 #include "FastTimes.h"
 
+/* forward decl: defined later in this file; CW strict-prototypes needs it before use */
+int SDL_SYS_TimerInit(void);
+
 #if TARGET_API_MAC_CARBON
 #define NewTimerProc NewTimerUPP
 #endif

@@ -1,3 +1,10 @@
+#ifdef __MWERKS__
+/* Mac OS 9 CodeWarrior build forces C globally (prefix does
+   "#pragma cplusplus off" so AA's uppercase .C sources compile as C).
+   This is a real C++ unit -- flip C++ back on. No-op elsewhere. */
+#pragma cplusplus on
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif

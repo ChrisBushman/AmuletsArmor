@@ -10,9 +10,11 @@
 #include <string.h>
 #include "PERFPROF.H"
 
-#ifdef TARGET_UNIX
+#if defined(TARGET_UNIX) && !defined(macintosh)
 #include <sys/time.h>
 #else
+/* Classic Mac OS has no <sys/time.h>/gettimeofday; use SDL's millisecond
+   clock like the non-Unix path (macintosh is TARGET_UNIX but not POSIX). */
 #include "SDL.h"
 #endif
 
@@ -51,7 +53,7 @@ E_Boolean PerfProfIsEnabled(T_void)
 
 unsigned long long PerfProfNow(T_void)
 {
-#ifdef TARGET_UNIX
+#if defined(TARGET_UNIX) && !defined(macintosh)
     struct timeval tv ;
     gettimeofday(&tv, NULL) ;
     return ((unsigned long long)tv.tv_sec * 1000000ULL) + (unsigned long long)tv.tv_usec ;

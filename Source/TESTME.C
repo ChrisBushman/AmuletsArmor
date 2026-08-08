@@ -306,6 +306,54 @@ T_void PullOut(T_void)
 }
 #endif
 
+/* OS 9 bring-up boot tracer (see AABuild/aa_os9_compat.c). No-op elsewhere. */
+#ifdef macintosh
+extern void AA_BootLog(const char *);
+#define AA_BOOT(m) AA_BootLog(m)
+#else
+#define AA_BOOT(m) ((void)0)
+#endif
+
+#if defined(macintosh) && defined(WIN_IPX)
+/* Classic Mac OS has no argv, so the launcher (AALauncher) hands off the
+   network server address through "aanet.ini" in the game's folder:
+       server=<ip-or-host>
+       port=<n>
+   Read it here -- and delete it (a one-shot handoff, so a stale address
+   doesn't silently force the next launch online). Returns 1 if a server was
+   named; no file / no server key => single player. */
+static int AAReadNetConfig(char *ipOut, int ipMax, int *portOut)
+{
+    FILE *f ;
+    char line[128] ;
+    int  found = 0 ;
+    int  i ;
+
+    *portOut = 0 ;
+    ipOut[0] = '\0' ;
+    f = fopen("aanet.ini", "rb") ;
+    if (f == NULL)
+        return 0 ;
+    while (fgets(line, (int)sizeof(line), f) != NULL)  {
+        for (i = (int)strlen(line) - 1 ;
+             i >= 0 && (line[i] == '\r' || line[i] == '\n' || line[i] == ' ') ;
+             i--)
+            line[i] = '\0' ;
+        if (strncmp(line, "server=", 7) == 0)  {
+            strncpy(ipOut, line + 7, (size_t)(ipMax - 1)) ;
+            ipOut[ipMax - 1] = '\0' ;
+            if (ipOut[0] != '\0')
+                found = 1 ;
+        } else if (strncmp(line, "port=", 5) == 0)  {
+            *portOut = atoi(line + 5) ;
+        }
+    }
+    fclose(f) ;
+    remove("aanet.ini") ;
+    return found ;
+}
+#endif /* macintosh && WIN_IPX */
+
 #ifdef WIN32
 T_void game_main(T_word16 argc, char *argv[])
 #else
@@ -345,8 +393,12 @@ extern void SleepMS(T_word32 sleepMS);
         argc = __ppArgOut ;
     }
 
+    AA_BOOT("06 PerfProfInit ok");
+    AA_BOOT("06a argv done");
     ConfigOpen() ;
+    AA_BOOT("06b ConfigOpen ok");
     ConfigLoad() ;
+    AA_BOOT("07 config ok");
 
     puts("Amulets & Armor version 1.0 -- (C) 1996 United Software Artists") ;
     puts("---------------------------------------------------------------") ;
@@ -379,7 +431,30 @@ extern void SleepMS(T_word32 sleepMS);
 //    printf("DirectTalk Handle: 0x%08lX\n", handle) ;
 #else
     if (argc == 1) {
+#if defined(macintosh) && defined(WIN_IPX)
+        /* No argv on classic Mac -- the launcher leaves the server address in
+           aanet.ini (see AAReadNetConfig). If it names a server, join it;
+           otherwise this is a single-player launch. */
+        char aaNetIP[80];
+        int  aaNetPort = 0;
+        if (AAReadNetConfig(aaNetIP, (int)sizeof(aaNetIP), &aaNetPort)) {
+            if (aaNetPort > 0)
+                IPXSetPort(aaNetPort);
+            if (SDLNet_Init() == -1) {
+                printf("SDLNet_Init: %s\n", SDLNet_GetError());
+                exit(2);
+            }
+            if (!IPXConnectToServer(aaNetIP)) {
+                printf("IPX Connection failed!\n");
+                exit(3);
+            }
+            handle = 1;
+        } else {
+            handle = 0;
+        }
+#else
         handle = 0;
+#endif
     } else if (argc == 2 || argc == 3)  {
 #if WIN_IPX
         // An IP address is given.  Set it to connect there
@@ -411,10 +486,13 @@ extern void SleepMS(T_word32 sleepMS);
          NULL,
          NULL,
          handle) ;
+    AA_BOOT("08 DirectTalkInit ok");
 
     /* Initialize the game. */
     UpdateGameBegin() ;
+    AA_BOOT("09 UpdateGameBegin ok");
     DebugSaveVectorTable() ;
+    AA_BOOT("10 intro: play sound");
 
 #ifdef PULL_OUT
     PullOut() ;
@@ -434,8 +512,10 @@ extern void SleepMS(T_word32 sleepMS);
         ColorUpdate(1) ;
 //        delay(200) ;
         SoundPlayByNumber(3501, 255) ;
+        AA_BOOT("11 before COMPANY screen");
         //if (IShowScreen("UI/SCREENS/USA1", VIEW_PALETTE_MAIN_TITLE, 400, FALSE, TRUE) == FALSE)  {
         if (IShowScreen("UI/SCREENS/COMPANY", VIEW_PALETTE_STANDARD, 400, TRUE, TRUE) == FALSE)  {
+            AA_BOOT("12 COMPANY screen shown (returned FALSE)");
             ColorFadeTo(0,0,0);
             GrDrawRectangle(0, 0, SCREEN_SIZE_X-1, SCREEN_SIZE_Y-1, 0) ;
             ColorUpdate(1) ;
@@ -469,9 +549,12 @@ extern void SleepMS(T_word32 sleepMS);
     GrDrawRectangle(0, 0, SCREEN_SIZE_X-1, SCREEN_SIZE_Y-1, 0) ;
     ColorUpdate(1) ;
     ViewSetPalette(VIEW_PALETTE_STANDARD) ;
+    AA_BOOT("13 intro done, before ClientInit");
     ClientInit();
+    AA_BOOT("14 ClientInit ok");
 
     SMMainInit() ;
+    AA_BOOT("15 SMMainInit ok - entering main loop");
     while (!SMMainIsDone())  {
         if ((TickerGet() - lastTick) < CAP_TICK_RATE) {
 #ifdef WIN32

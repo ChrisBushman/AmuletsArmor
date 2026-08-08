@@ -183,6 +183,9 @@ typedef struct
 } T_equipItemDescription;
 
 
+#if defined(__MWERKS__)
+#pragma options align=packed
+#endif
 typedef struct
 {
     /* equipment type of item */
@@ -212,6 +215,9 @@ typedef struct
 } PACK T_equipItemDescriptionBorland;
 #else
 } T_equipItemDescriptionBorland;
+#endif
+#if defined(__MWERKS__)
+#pragma options align=reset
 #endif
 
 

@@ -942,7 +942,7 @@ T_void ControlDisplayControlPage(T_void)
     TxtboxSetData(windowID, "");
 
     /* open bulletin file */
-    fp = fopen("control.txt", "r");
+    fp = fopen("control.txt", "rb");
 
     if (fp != NULL ) {
         while (feof(fp) == FALSE) {
