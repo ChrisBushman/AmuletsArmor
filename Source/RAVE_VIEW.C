@@ -66,6 +66,12 @@ static E_Boolean G_raveFrameReady = FALSE ; /* a frame is in G_raveFrameBuf   */
    with no rebuild. Default ON for the RAVE build; the ini can force it off. */
 static E_Boolean G_raveEnabled    = TRUE ;
 
+/* Per-frame suspend: the game sets this (e.g. while the escape/options menu is
+   open over the full 3D view) so RAVE goes dormant and the software renderer
+   draws the frame with that UI on top. Separate from G_raveEnabled so it
+   doesn't fight the F12/ini choice. */
+static E_Boolean G_raveSuspended  = FALSE ;
+
 /*-------------------------------------------------------------------------*
  * Texture cache (rave-2).  Keyed by the pixel pointer AA hands the software
  * renderer (G_3d*TextureArray[] entries); each maps to an uploaded
@@ -476,7 +482,8 @@ static T_void IRaveSetRenderState(TQADrawContext *ctx)
        surfaces alike -- crisp, no blend cost. Translucent surfaces (rave-5/6)
        layer real blending on top of this. */
     QASetInt(ctx,   kQATag_AlphaTestFunc, kQAAlphaTest_GT) ;
-    QASetFloat(ctx, kQATag_AlphaTestRef,  0.5f) ;
+    QASetFloat(ctx, kQATag_AlphaTestRef,  0.25f) ;  /* drop alpha=0 (masked
+                                    holes); keep 0.5 (translucent) and 1.0 */
 
     /* Interpolate blending (src-over-dst by alpha) is the default for the
        translucent draws rave-5/6 will flag per-primitive; opaque draws pass
@@ -658,7 +665,7 @@ E_Boolean RaveViewIsPresenting(T_void)
    (normW,normH) -- the *texture's* real dimensions (POT), which for a padded
    sprite differ from its logical w x h. light -> kd_r/g/b (Modulate). */
 static T_void IRaveDrawTexturedQuad(
-           TQATexture *tex, float normW, float normH,
+           TQATexture *tex, float normW, float normH, float alpha,
            const T_raveVertex *topLeft,
            const T_raveVertex *bottomLeft,
            const T_raveVertex *bottomRight,
@@ -683,9 +690,12 @@ static T_void IRaveDrawTexturedQuad(
         /* RAVE wants u/w, v/w; it divides by interpolated invW per pixel. */
         v[i].uOverW = (src[i]->u * invNW) * src[i]->invW ;
         v[i].vOverW = (src[i]->v * invNH) * src[i]->invW ;
-        /* Under kQATextureOp_Modulate, r/g/b are ignored; light goes in kd_*. */
+        /* Under kQATextureOp_Modulate, r/g/b are ignored; light goes in kd_*.
+           alpha < 1 makes the quad blend (translucent walls / windows); the
+           final texel alpha = texel.a * alpha still passes the alpha-test cutout
+           (ref 0.25) so masked holes drop but 0.5 translucency survives. */
         v[i].r = v[i].g = v[i].b = 0.0f ;
-        v[i].a = 1.0f ;
+        v[i].a = alpha ;
         v[i].kd_r = v[i].kd_g = v[i].kd_b = src[i]->light ;
         v[i].ks_r = v[i].ks_g = v[i].ks_b = 0.0f ;
     }
@@ -694,9 +704,11 @@ static T_void IRaveDrawTexturedQuad(
     QADrawTriTexture(G_raveContext, &v[0], &v[2], &v[3], kQATriFlags_None) ;
 }
 
-/* Walls + floors/ceilings: flat AA texture (pointer past its 4-byte header). */
+/* Walls + floors/ceilings: flat AA texture (pointer past its 4-byte header).
+   alpha < 1 blends the quad (translucent walls / building windows). */
 T_void RaveViewEmitQuad(
            T_byte8 *p_texture,
+           float alpha,
            const T_raveVertex *topLeft,
            const T_raveVertex *bottomLeft,
            const T_raveVertex *bottomRight,
@@ -712,7 +724,7 @@ T_void RaveViewEmitQuad(
 
     IRaveDrawTexturedQuad(tex,
         (float)PictureGetWidth(p_texture), (float)PictureGetHeight(p_texture),
-        topLeft, bottomLeft, bottomRight, topRight) ;
+        alpha, topLeft, bottomLeft, bottomRight, topRight) ;
 }
 
 /* Sprites/objects: column-sparse picture-raster (rave-6). w,h are the sprite's
@@ -735,13 +747,25 @@ T_void RaveViewEmitSprite(
         return ;
 
     IRaveDrawTexturedQuad(tex,
-        (float)INextPow2(w), (float)INextPow2(h),
+        (float)INextPow2(w), (float)INextPow2(h), 1.0f,
         topLeft, bottomLeft, bottomRight, topRight) ;
 }
 
 E_Boolean RaveViewIsActive(T_void)
 {
-    return ((G_raveContext != NULL) && G_raveEnabled) ? TRUE : FALSE ;
+    return ((G_raveContext != NULL) && G_raveEnabled && !G_raveSuspended)
+               ? TRUE : FALSE ;
+}
+
+/* Per-frame suspend (escape/options menu over the full 3D view). While
+   suspended the RAVE path is dormant and the software renderer draws + shows,
+   so that UI isn't hidden by the composite. Clears the ready frame so the
+   compositor doesn't draw a stale RAVE view over the menu. */
+T_void RaveViewSetSuspended(E_Boolean s)
+{
+    G_raveSuspended = s ? TRUE : FALSE ;
+    if (G_raveSuspended)
+        G_raveFrameReady = FALSE ;
 }
 
 /* Runtime software<->RAVE switch. RaveViewSetEnabled(FALSE) drops the RAVE
@@ -785,15 +809,17 @@ E_Boolean RaveViewIsPresenting(T_void)  { return FALSE ; }
 T_void    RaveViewSetEnabled(E_Boolean on) { (void)on ; }
 E_Boolean RaveViewGetEnabled(T_void)    { return FALSE ; }
 E_Boolean RaveViewToggle(T_void)        { return FALSE ; }
+T_void    RaveViewSetSuspended(E_Boolean s) { (void)s ; }
 
 T_void RaveViewEmitQuad(
            T_byte8 *p_texture,
+           float alpha,
            const T_raveVertex *topLeft,
            const T_raveVertex *bottomLeft,
            const T_raveVertex *bottomRight,
            const T_raveVertex *topRight)
 {
-    (void)p_texture ; (void)topLeft ; (void)bottomLeft ;
+    (void)p_texture ; (void)alpha ; (void)topLeft ; (void)bottomLeft ;
     (void)bottomRight ; (void)topRight ;
 }
 

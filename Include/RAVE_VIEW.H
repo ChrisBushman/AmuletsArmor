@@ -53,10 +53,12 @@ typedef struct {
 
 /* Emit one wall/floor quad as two textured triangles (corners in order:
    top-left, bottom-left, bottom-right, top-right). p_texture is an AA texture
-   pixel pointer (see IRaveGetTexture). No-op if the texture can't be uploaded
-   or RAVE is inactive. */
+   pixel pointer (see IRaveGetTexture). alpha < 1 blends the quad (translucent
+   walls / building windows); use 1.0 for opaque. No-op if the texture can't be
+   uploaded or RAVE is inactive. */
 T_void RaveViewEmitQuad(
            T_byte8 *p_texture,
+           float alpha,
            const T_raveVertex *topLeft,
            const T_raveVertex *bottomLeft,
            const T_raveVertex *bottomRight,
@@ -121,6 +123,12 @@ E_Boolean RaveViewIsPresenting(T_void) ;
 T_void    RaveViewSetEnabled(E_Boolean on) ;
 E_Boolean RaveViewGetEnabled(T_void) ;
 E_Boolean RaveViewToggle(T_void) ;
+
+/* Per-frame suspend: pass TRUE (e.g. while the escape/options menu is open over
+   the full 3D view) to make RAVE dormant for that frame so the software
+   renderer draws the frame + that UI on top instead of the composite hiding
+   it. No-op on non-RAVE builds. */
+T_void    RaveViewSetSuspended(E_Boolean s) ;
 
 #endif /* _RAVE_VIEW_H_ */
 

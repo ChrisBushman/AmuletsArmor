@@ -2916,11 +2916,12 @@ INDICATOR_LIGHT(829, INDICATOR_RED) ;
         uL = (float)(G_wall.offX - vvL) ;
         uR = (float)(G_wall.offX - vvR) ;
 
-        /* Vertical texel: ~1 texel per world unit, anchored offY at the top,
-           spanning the wall's world height. (Per-side vertical pegging is a
-           later refinement; this is the on-hardware calibration point.) */
-        vTop = (float)G_wall.offY ;
-        vBot = (float)G_wall.offY + (float)(absoluteTop - absoluteBottom) ;
+        /* Vertical texel: ~1 texel per world unit. AA wall textures are
+           bottom-up (software sampler steps by -du, so screen-BOTTOM maps to
+           texel offY), so the screen-bottom corner gets offY and the top gets
+           offY + wall-height. (Per-side pegging is a later refinement.) */
+        vTop = (float)G_wall.offY + (float)(absoluteTop - absoluteBottom) ;
+        vBot = (float)G_wall.offY ;
 
         /* Depth: invW = 1/worldDepth (relativeFromZ/ToZ are world units) --
            the SAME 1/depth scale floors and sprites use, so the z-buffer sorts
@@ -2946,7 +2947,12 @@ INDICATOR_LIGHT(829, INDICATOR_RED) ;
         rvTR.x = (float)sx2 ; rvTR.y = (float)(scrYTopRight   >> 16) ;
         rvTR.z = zR ; rvTR.invW = invWR ; rvTR.u = uR ; rvTR.v = vTop ; rvTR.light = lightR ;
 
-        RaveViewEmitQuad(G_wall.p_texture, &rvTL, &rvBL, &rvBR, &rvTR) ;
+        /* opaque==3 = translucent (building windows etc.) -> blend at 0.5;
+           opaque==1 solid and opaque==2 masked stay opaque (alpha-test cutout
+           handles the masked holes). */
+        RaveViewEmitQuad(G_wall.p_texture,
+                         (G_wall.opaque == 3) ? 0.5f : 1.0f,
+                         &rvTL, &rvBL, &rvBR, &rvTR) ;
     }
 #endif /* macintosh && AA_RENDERER_RAVE */
 
@@ -4614,6 +4620,12 @@ T_void View3dSetSize(T_word16 width, T_word16 height)
 
     MathInitialize(width) ;
 
+    /* rave-1/7: (re)create the RAVE HW context now that VIEW3D_WIDTH/HEIGHT are
+       set, so the back buffer + read-back match the actual view size (creating
+       it in ViewInitialize used the stale defaults -> short view). Idempotent
+       and no-op unless a RAVE build. */
+    RaveViewInit() ;
+
 /* !!! Hardcoded !!! */
 /*
     p_backdrop = PictureLock("CLOUDS2.PIC", &res) ;
@@ -5132,7 +5144,7 @@ DebugCheck(start < MAX_VIEW3D_WIDTH) ;
             fBR.x=sxR; fBR.y=syB; fBR.z=z; fBR.invW=invW; fBR.u=uRight; fBR.v=vRight; fBR.light=light ;
             fTR.x=sxR; fTR.y=syT; fTR.z=z; fTR.invW=invW; fTR.u=uRight; fTR.v=vRight; fTR.light=light ;
 
-            RaveViewEmitQuad(p_texture, &fTL, &fBL, &fBR, &fTR) ;
+            RaveViewEmitQuad(p_texture, 1.0f, &fTL, &fBL, &fBR, &fTR) ;
         }
 #endif /* macintosh && AA_RENDERER_RAVE */
 

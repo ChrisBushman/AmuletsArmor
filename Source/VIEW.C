@@ -14,6 +14,7 @@
 #include "3D_TRIG.H"
 #include "3D_VIEW.H"
 #include "RAVE_VIEW.H"   /* alt HW renderer; no-ops unless AA_RENDERER_RAVE */
+#include "ESCMENU.H"     /* EscapeMenuIsOpen() -- suspend RAVE while it's up */
 #include "AREASND.H"
 #include "CLIENT.H"
 #include "COLOR.H"
@@ -90,9 +91,11 @@ T_void ViewInitialize(T_void)
 //    printf("Initializing 3D view.\n");
 
     View3dInitialize() ;
-    RaveViewInit() ;   /* bring up the RAVE HW context (no-op unless RAVE build) */
     ObjectsInitialize() ;
 
+    /* View3dSetSize brings up the RAVE HW context at the end, once the view
+       dimensions are known (RaveViewInit here would size it to the stale
+       defaults). No-op unless a RAVE build. */
     View3dSetSize(312*VIEW3D_SCALE, 148*VIEW3D_SCALE) ;
 
     MapInitialize() ;
@@ -188,6 +191,9 @@ INDICATOR_LIGHT(105, INDICATOR_GREEN) ;
     /* (rave-5), bracketed by FrameBegin/FrameEnd. The software raster still   */
     /* runs and is what the player sees until rave-7 presents the RAVE frame   */
     /* and skips it. FrameBegin/End are no-ops off-RAVE / when inactive.       */
+    /* Suspend RAVE while the escape/options menu is up over the full view, so
+       the software renderer draws it on top instead of the composite hiding it. */
+    RaveViewSetSuspended(EscapeMenuIsOpen()) ;
     RaveViewFrameBegin() ;
     View3dDrawView() ;
     RaveViewFrameEnd() ;
