@@ -4522,14 +4522,15 @@ T_void IDrawObjectAndWallRuns(T_void)
             syT = (float)p_ri->top ;
             syB = (float)p_ri->realBottom ;  /* full sprite; z-buffer clips */
 
-            /* v flipped (screen-top -> texel picHeight): confirmed on hardware
-               that sprites alone are vertically inverted vs walls/floors (the
-               view as a whole is NOT flipped -- flipY=0). So AA object columns
-               are effectively bottom-up relative to the wall/floor path. */
-            oTL.x=sxL; oTL.y=syT; oTL.z=z; oTL.invW=invW; oTL.u=uA; oTL.v=vH;   oTL.light=light ;
-            oBL.x=sxL; oBL.y=syB; oBL.z=z; oBL.invW=invW; oBL.u=uA; oBL.v=0.0f; oBL.light=light ;
-            oBR.x=sxR; oBR.y=syB; oBR.z=z; oBR.invW=invW; oBR.u=uB; oBR.v=0.0f; oBR.light=light ;
-            oTR.x=sxR; oTR.y=syT; oTR.z=z; oTR.invW=invW; oTR.u=uB; oTR.v=vH;   oTR.light=light ;
+            /* screen-top -> texel 0, matching the software sprite mapping
+               (AA object pictures are top-down; the upload is top-down too).
+               With flipY=0 (whole view not flipped), NO per-sprite flip: the
+               earlier flip put the flower's opaque bottom rows at the top of the
+               billboard, making flowers "float" and barrels invert. */
+            oTL.x=sxL; oTL.y=syT; oTL.z=z; oTL.invW=invW; oTL.u=uA; oTL.v=0.0f; oTL.light=light ;
+            oBL.x=sxL; oBL.y=syB; oBL.z=z; oBL.invW=invW; oBL.u=uA; oBL.v=vH;   oBL.light=light ;
+            oBR.x=sxR; oBR.y=syB; oBR.z=z; oBR.invW=invW; oBR.u=uB; oBR.v=vH;   oBR.light=light ;
+            oTR.x=sxR; oTR.y=syT; oTR.z=z; oTR.invW=invW; oTR.u=uB; oTR.v=0.0f; oTR.light=light ;
 
             RaveViewEmitSprite(p_ri->p_picture, picW, p_ri->picHeight,
                                &oTL, &oBL, &oBR, &oTR) ;
