@@ -1233,31 +1233,87 @@ T_void MouseSetRelativeSensitivity(T_word16 sensitivity)
     DebugEnd();
 }
 
+#ifdef TARGET_UNIX
+/* RESSCALE bridge -- read the OS cursor position and warp it, in logical
+ * (game) coordinates mapped onto the real (possibly scaled) window.  Degrade
+ * gracefully when RESSCALE is inactive.  Used by the edge-recenter state
+ * machine in MouseRelativeRead. */
+extern void  ResScaleWarpMouse(Uint16 logicalX, Uint16 logicalY);
+extern Uint8 ResScaleGetMouseState(int *logicalX, int *logicalY);
+extern int   ResScaleGetLogicalWidth(void);
+extern int   ResScaleGetLogicalHeight(void);
+
+/* Edge-recenter state (see MouseRelativeRead).  0 = tracking: the raw mouse
+ * delta drives the view.  >0 = swallowing: the cursor neared a screen edge, we
+ * warped it back to center, and we ignore look motion until it has actually
+ * arrived at center -- by which point the warp's own (phantom) relative motion
+ * has been generated and drained.  The counter is a safety cap so we can never
+ * get stuck ignoring input. */
+static int G_relRecentering = 0;
+#define REL_RECENTER_MAX_FRAMES 12
+#endif
+
 T_void MouseRelativeRead(T_sword16 *aDeltaX, T_sword16 *aDeltaY)
 {
     DebugRoutine("MouseRelativeRead");
 
     if (G_relativeMode) {
 #ifdef TARGET_UNIX
-        /* SDL_WarpMouse + SDL_GetMouseState is unreliable in SDL2/sdl12-compat:
-         * SDL2 suppresses warp-generated motion events so SDL_GetMouseState never
-         * reflects the warped center, producing huge persistent deltas.
-         * Use SDL_GetRelativeMouseState for true accumulated hardware deltas instead. */
-        if (G_relativeModeFirstIsZero) {
-            int dummy_dx = 0, dummy_dy = 0;
-            SDL_GetRelativeMouseState(&dummy_dx, &dummy_dy); /* drain first-frame accumulation */
-            *aDeltaX = 0;
-            *aDeltaY = 0;
-            G_relativeModeFirstIsZero = FALSE;
-        } else {
-            int sdl_dx = 0, sdl_dy = 0;
-            SDL_GetRelativeMouseState(&sdl_dx, &sdl_dy);
-            /* SDL window is 640x400 (2x game coords); divide by 2 to match scale of
-             * the warp-poll approach so sensitivity feels the same. */
-            *aDeltaX = (T_sword16)(sdl_dx * G_relativeSensitivity / 2);
-            *aDeltaY = (T_sword16)(sdl_dy * G_relativeSensitivity / 2);
+        /* Raw hardware delta (SDL_GetRelativeMouseState) drives the view -- it
+         * has the correct direction/feel; its only flaw is stalling when the
+         * cursor hits a screen edge.  We fix that by recentering the cursor,
+         * but a warp injects its own motion into that same accumulator
+         * (immediately on SDL2, a frame or two later on classic-Mac SDL 1.2).
+         * Rather than fight that per-platform, use a state machine: when the
+         * cursor nears an edge, warp to center and enter a "swallow" state that
+         * ignores look motion until the cursor has actually reached center --
+         * by then the warp's phantom has been generated and drained, so
+         * tracking resumes clean.  Edges are far (the cursor roams the whole
+         * screen), so this fires rarely and only briefly freezes look. */
+        {
+            int lw = ResScaleGetLogicalWidth();
+            int lh = ResScaleGetLogicalHeight();
+            int ax = 0, ay = 0;
+            int dx = 0, dy = 0;
+            int cx, cy, mx, my;
+
+            if (lw <= 0) lw = SCREEN_SIZE_X * 2;
+            if (lh <= 0) lh = SCREEN_SIZE_Y * 2;
+            cx = lw / 2;  cy = lh / 2;
+            mx = lw / 6;  my = lh / 6;   /* edge margin */
+
+            ResScaleGetMouseState(&ax, &ay);       /* absolute (edge/center test) */
+            SDL_GetRelativeMouseState(&dx, &dy);   /* raw delta; always drained   */
+
+            if (G_relativeModeFirstIsZero) {
+                *aDeltaX = 0;
+                *aDeltaY = 0;
+                G_relativeModeFirstIsZero = FALSE;
+                G_relRecentering = 0;
+            } else if (G_relRecentering) {
+                /* Ignore look motion; keep pulling the cursor to center until
+                 * it lands there (or a safety cap elapses), then resume. */
+                *aDeltaX = 0;
+                *aDeltaY = 0;
+                if (((ax > cx - lw / 16) && (ax < cx + lw / 16) &&
+                     (ay > cy - lh / 16) && (ay < cy + lh / 16)) ||
+                    (G_relRecentering >= REL_RECENTER_MAX_FRAMES)) {
+                    G_relRecentering = 0;          /* settled -- resume clean */
+                } else {
+                    ResScaleWarpMouse((Uint16)cx, (Uint16)cy);
+                    G_relRecentering++;
+                }
+            } else {
+                /* Normal tracking: raw delta drives the view. */
+                *aDeltaX = (T_sword16)(dx * G_relativeSensitivity / 2);
+                *aDeltaY = (T_sword16)(dy * G_relativeSensitivity / 2);
+                /* Nearing an edge?  Recenter and start swallowing. */
+                if ((ax < mx) || (ax > lw - mx) || (ay < my) || (ay > lh - my)) {
+                    ResScaleWarpMouse((Uint16)cx, (Uint16)cy);
+                    G_relRecentering = 1;
+                }
+            }
         }
-        /* No re-center warp: SDL_GetRelativeMouseState resets its accumulator each call. */
 #else
         T_word16 x, y;
         // Read the mouse position and then recenter the mouse
