@@ -509,11 +509,13 @@ static T_void IRaveSetRenderState(TQADrawContext *ctx)
 
     /* Modulate the texture by the per-vertex diffuse color so rave-5's gouraud
        sector lighting darkens/brightens the texels.
-       Texture wrap: RAVE REPEATS by default; clamping is opt-in via the
-       kQATextureOp_Clamp_U/_V bits, which we deliberately do NOT OR in here, so
-       walls (whose u exceeds the texture width to tile) wrap correctly. We keep
-       this as the documented default rather than setting a clamp bit; verify on
-       hardware that a tiling wall shows repeats (not one stretched copy). */
+       Texture wrap: kQATextureOp_None is RAVE's default and REPEATS; non-wrapping
+       (clamp) is opt-in via the kQATextureOp_Shrink bit (verified against RAVE.h,
+       QuickDraw 3D 1.6 -- there is no kQATextureOp_Clamp_U/_V in this RAVE). We OR
+       in only Modulate, never Shrink, so walls (whose u exceeds the texture width
+       to tile) repeat correctly. (RAVE also exposes GL-style kQATagGL_TextureWrapU/V
+       = kQAGL_Repeat/Clamp tags, but those OpenGL-extension tags may not be honored
+       by the ATI Rage LT Pro engine; the Shrink bit is the standard RAVE control.) */
     QASetInt(ctx, kQATag_TextureOp, kQATextureOp_Modulate) ;
 
     /* Alpha-test cutout: our ARGB16 textures put alpha=0 on palette index 0
