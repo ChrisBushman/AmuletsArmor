@@ -68,6 +68,11 @@ SDL_Surface  *ResScaleSetVideoMode(
    presents it.  Always updates the full frame (fast at these sizes). */
 void          ResScaleUpdate(void);
 
+/* Request a screenshot of the next composited frame (game UI + RAVE 3D view).
+   Saved as AAshotNN.bmp in the app folder at the next ResScaleUpdate present.
+   Wired to F8 in the client input loop; used for software-vs-RAVE A/B compares. */
+void          ResScaleRequestScreenshot(void);
+
 /* Call on every event obtained from SDL_PollEvent / SDL_WaitEvent.
    Rewrites mouse coordinates from window space back to the game's
    logical space, and (if hotkeys=1 in resolution.ini) consumes

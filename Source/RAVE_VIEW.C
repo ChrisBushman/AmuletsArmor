@@ -311,7 +311,7 @@ typedef struct {
    transparent. Returns NULL (cached) if unusable. */
 static TQATexture *IRaveUploadSprite(T_byte8 *p_picture, T_word16 w, T_word16 h)
 {
-    T_word16        potW, potH ;
+    T_word16        potW, potH, vpad ;
     unsigned short *buf ;
     T_palette       pal ;
     TQAImage        image ;
@@ -325,6 +325,12 @@ static TQATexture *IRaveUploadSprite(T_byte8 *p_picture, T_word16 w, T_word16 h)
 
     potW = INextPow2(w) ;
     potH = INextPow2(h) ;
+    /* RAVE samples texture V "upward" (v=0 is the BOTTOM row of the image), so
+       the sprite content must sit flush with the BOTTOM of the POT texture, rows
+       [vpad, potH), with the transparent pad ABOVE it. If it sat at the top
+       ([0,h)) the quad's v-range [0, h/potH] would land on the padded bottom and
+       the sprite would render as mostly pad (the "crop"). vpad=0 when h is POT. */
+    vpad = (T_word16)(potH - h) ;
 
     buf = (unsigned short *)MemAlloc((T_word32)potW * (T_word32)potH * 2UL) ;
     if (buf == NULL)
@@ -339,21 +345,49 @@ static TQATexture *IRaveUploadSprite(T_byte8 *p_picture, T_word16 w, T_word16 h)
     GrGetPalette(0, 256, pal) ;
 
 #if 0
-    /* TEMP TEST (flip to #if 1 to run): fill the whole logical sprite rect
-       [0..w)x[0..h) with a solid OPAQUE RED, ignoring the column decode. This
-       isolates the "barrel renders as ~40% crop" bug: if the billboard now shows
-       a solid red rectangle the full height of the sprite (top..realBottom), the
-       UV mapping + geometry are correct and the crop lives in the decode; if the
-       red is still only ~40% tall, the crop is in the UV/geometry. This is the
-       planned NEXT diagnostic for the crop -- was built + deployed but not yet
-       evaluated on hardware (empty-quest-list build blocked it). */
+    /* TEMP CROP DIAGNOSTIC (Phase 2): fill the whole logical sprite rect
+       [0..w)x[0..h) with 4 OPAQUE horizontal bands by texture-row quarter,
+       ignoring the column decode -- so the billboard shows the full sprite
+       texture rect regardless of what the decode produces. Bands by texture row:
+         row [0 .. h/4)   = RED     (blue at the OPPOSITE end, see mapping)
+         row [h/4 .. h/2) = YELLOW
+         row [h/2 .. 3h/4)= GREEN
+         row [3h/4 .. h)  = BLUE
+       Because sprites use the wall v-flip (v=picHeight at the screen TOP corner,
+       v=0 at bottom), texture row 0 maps to the screen BOTTOM: so on screen you
+       should see, top->bottom, BLUE, GREEN, YELLOW, RED, each ~1/4 of the sprite.
+       Reads in ONE hardware trip:
+         - all 4 bands, full height  => geometry+UV correct; crop is in the DECODE.
+         - fewer bands / short        => crop is in the billboard geometry/UV, and
+                                         the MISSING colors tell which texture rows
+                                         (which sprite end) are being lost.
+       Set this block back to #if 0 to restore the real decode below. */
     {
         T_word16 rr, cc ;
         (void)cols ;
-        for (rr = 0 ; rr < h ; rr++)
-            for (cc = 0 ; cc < w ; cc++)
-                buf[(T_word32)rr * potW + cc] =
-                    (unsigned short)(0x8000 | (0x1F << 10)) ; /* opaque red */
+        /* Fill the ENTIRE POT texture (content AND padding) so the exact v->screen
+           mapping is unambiguous:
+             CONTENT rows [0,h)   : smooth vertical gradient, pure RED at row 0 ->
+                                    pure BLUE at row h-1.
+             PADDING rows [h,potH): opaque GREEN.
+           Read on screen: a full red..blue gradient with NO green => v maps the
+           whole content, mapping is correct; only PART of the gradient => that's
+           the v-range actually sampled (red/blue ends give orientation, the rest
+           is the crop); any GREEN => the quad samples past the content into the
+           POT padding (v-range or normalization is wrong). */
+        for (rr = 0 ; rr < potH ; rr++) {
+            unsigned short color ;
+            if (rr < vpad) {
+                color = (unsigned short)(0x8000 | (0x1F << 5)) ;      /* green = POT padding (above content) */
+            } else {
+                T_word16 crow = (T_word16)(rr - vpad) ;               /* 0..h-1 content row */
+                T_word16 b5 = (T_word16)((h > 1) ? ((T_word32)crow * 31) / (h - 1) : 0) ;
+                T_word16 r5 = (T_word16)(31 - b5) ;
+                color = (unsigned short)(0x8000 | (r5 << 10) | b5) ;  /* red@top -> blue@bottom */
+            }
+            for (cc = 0 ; cc < potW ; cc++)
+                buf[(T_word32)rr * potW + cc] = color ;
+        }
     }
 #else
     /* Decode each column's opaque run into the row-major POT buffer. */
@@ -369,7 +403,7 @@ static TQATexture *IRaveUploadSprite(T_byte8 *p_picture, T_word16 w, T_word16 h)
         if (en >= h)
             en = (T_byte8)(h - 1) ;
         for (r = st ; r <= en ; r++)
-            buf[(T_word32)r * potW + col] = IRaveArgb16(pal, colBase[r]) ;
+            buf[(T_word32)(vpad + r) * potW + col] = IRaveArgb16(pal, colBase[r]) ;
     }
 #endif
 

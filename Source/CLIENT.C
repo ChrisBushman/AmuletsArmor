@@ -1163,6 +1163,22 @@ T_void ClientUpdate(T_void)
             }
 #endif
 
+#if defined(macintosh)
+            /* F8 saves a screenshot of the composited frame to AAshotNN.bmp in
+               the app folder (works for BOTH software and RAVE, so A/B frames can
+               be diffed off-device). Edge-detected: one press = one shot. */
+            {
+                extern void ResScaleRequestScreenshot(void) ;
+                static E_Boolean s_prevF8 = FALSE ;
+                E_Boolean nowF8 = KeyboardGetScanCode(KEY_SCAN_CODE_F8) ;
+                if (nowF8 && !s_prevF8)  {
+                    ResScaleRequestScreenshot() ;
+                    MessageAdd("Screenshot saved (AAshotNN.bmp)") ;
+                }
+                s_prevF8 = nowF8 ;
+            }
+#endif
+
             playerMoveAngle = PlayerGetAngle() ;
 
             if (!EscapeMenuIsOpen()) {

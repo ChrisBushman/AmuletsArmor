@@ -1594,6 +1594,12 @@ INDICATOR_LIGHT(114, INDICATOR_GREEN) ;
             float     zf   = 0.9999f, iw = 0.0001f ;
             float     syT  = (float)G_alpha ;
             float     syB  = (float)(G_alpha + bdH) ;
+            /* When pitched UP, G_alpha>0 pushes the panorama's top edge (syT) down
+               the screen and the view above it was left BLACK. Extend the quad's
+               top up to the view top (y=0) so the sky fills it. (Looking down,
+               syT<0 already covers the top, so leave it.) The panorama stretches
+               slightly into the added band -- fine for a low-detail sky backdrop. */
+            float     topY = (syT < 0.0f) ? syT : 0.0f ;
             T_sword32 seg1 ;
             T_raveVertex a, b, c, d ;
 
@@ -1603,19 +1609,19 @@ INDICATOR_LIGHT(114, INDICATOR_GREEN) ;
             if (seg1 > VIEW3D_WIDTH) seg1 = VIEW3D_WIDTH ;
 
             /* segment 1: screen x [0..seg1], backdrop u [off..off+seg1] */
-            a.x=0.0f;        a.y=syT; a.z=zf; a.invW=iw; a.u=(float)off;        a.v=0.0f;       a.light=1.0f ;
+            a.x=0.0f;        a.y=topY; a.z=zf; a.invW=iw; a.u=(float)off;        a.v=0.0f;       a.light=1.0f ;
             b.x=0.0f;        b.y=syB; b.z=zf; b.invW=iw; b.u=(float)off;        b.v=(float)bdH; b.light=1.0f ;
             c.x=(float)seg1; c.y=syB; c.z=zf; c.invW=iw; c.u=(float)(off+seg1); c.v=(float)bdH; c.light=1.0f ;
-            d.x=(float)seg1; d.y=syT; d.z=zf; d.invW=iw; d.u=(float)(off+seg1); d.v=0.0f;       d.light=1.0f ;
+            d.x=(float)seg1; d.y=topY; d.z=zf; d.invW=iw; d.u=(float)(off+seg1); d.v=0.0f;       d.light=1.0f ;
             RaveViewEmitSky(G_backdrop, (T_word16)bdW, (T_word16)bdH, &a, &b, &c, &d) ;
 
             /* segment 2 (wrapped): screen x [seg1..VIEW3D_WIDTH], u [0..rem] */
             if (seg1 < VIEW3D_WIDTH) {
                 T_sword32 rem = (T_sword32)VIEW3D_WIDTH - seg1 ;
-                a.x=(float)seg1;         a.y=syT; a.z=zf; a.invW=iw; a.u=0.0f;       a.v=0.0f;       a.light=1.0f ;
+                a.x=(float)seg1;         a.y=topY; a.z=zf; a.invW=iw; a.u=0.0f;       a.v=0.0f;       a.light=1.0f ;
                 b.x=(float)seg1;         b.y=syB; b.z=zf; b.invW=iw; b.u=0.0f;       b.v=(float)bdH; b.light=1.0f ;
                 c.x=(float)VIEW3D_WIDTH; c.y=syB; c.z=zf; c.invW=iw; c.u=(float)rem; c.v=(float)bdH; c.light=1.0f ;
-                d.x=(float)VIEW3D_WIDTH; d.y=syT; d.z=zf; d.invW=iw; d.u=(float)rem; d.v=0.0f;       d.light=1.0f ;
+                d.x=(float)VIEW3D_WIDTH; d.y=topY; d.z=zf; d.invW=iw; d.u=(float)rem; d.v=0.0f;       d.light=1.0f ;
                 RaveViewEmitSky(G_backdrop, (T_word16)bdW, (T_word16)bdH, &a, &b, &c, &d) ;
             }
         }
@@ -2815,15 +2821,22 @@ static float IRaveInvW(float depth)
 }
 
 /* invW -> depth-buffer z in 0..1 (hyperbolic; near ~0, far -> 1).
-   Perspective depth with near=1 world unit and far=9999 (the engine's max-depth
-   clamp, 3D_VIEW.C ZMIN/9999 bounds): z = ZFAR/(ZFAR-1) * (1 - invW), i.e.
-   ~ (1 - invW). invW = 1/worldDepth, so depth=1 -> 0 and depth->9999 -> ~1,
-   monotonic and spreading NEAR geometry across the whole range. The old
-   1 - invW*16 collapsed everything closer than depth 16 into a single z=0
-   bucket, giving z-fighting / wrong occlusion up close (the magic 16). */
+   z = 1 - RAVE_ZNEAR*invW, i.e. z=0 at depth=RAVE_ZNEAR and z->1 as depth->inf.
+   invW = 1/worldDepth.
+
+   RAVE_ZNEAR is the near plane in WORLD UNITS and it MUST sit at the nearest real
+   geometry (walls start at ZMIN=10, 3D_VIEW.C:809) -- NOT at 1. An earlier version
+   used near=1 (z = 1.0001*(1-invW)); that spent almost the entire [0,1] z range on
+   depth 1..10 (which nothing occupies) and crushed depth 10..500 -- the actual
+   gameplay range -- into [0.99,1.0], so billboards and the walls a few units behind
+   them landed in the same z bucket and z-fought (sprites sank into walls, cropping
+   them). near=ZMIN restores usable separation across the visible range (e.g. depth
+   166 vs 200 now differ by ~0.01 instead of ~0.001). Max depth (9999 clamp) -> z
+   0.999, still under the sky's 0.9999 so the sky stays behind everything. */
+#define RAVE_ZNEAR 10.0f   /* = ZMIN world units */
 static float IRaveZ(float invW)
 {
-    float z = 1.0001f * (1.0f - invW) ;   /* ZFAR/(ZFAR-1), near=1, far=9999 */
+    float z = 1.0f - invW * RAVE_ZNEAR ;
     if (z < 0.0f) z = 0.0f ;
     if (z > 1.0f) z = 1.0f ;
     return z ;
@@ -4558,12 +4571,12 @@ T_void IDrawObjectAndWallRuns(T_void)
             if ((G_objectCount > 0) && (((s_diagTick++) % 90) == 0)) {
                 T_3dObjectRunInfo *ri = &G_objectRun[0].runInfo ;
                 if ((ri->p_obj != NULL) && (ri->p_picture != NULL)) {
-                    float   iw = IRaveInvW((float)ri->distance) ;
                     T_byte8 buf[80] ;
-                    sprintf((char *)buf, "o0 dist=%d z=%d t=%d rb=%d sky=%d a=%d",
-                            (int)ri->distance, (int)(IRaveZ(iw) * 1000.0f),
+                    sprintf((char *)buf, "o0 d=%d t=%d rb=%d pw=%d ph=%d a=%d",
+                            (int)ri->distance,
                             (int)ri->top, (int)ri->realBottom,
-                            (G_backdrop != NULL) ? 1 : 0, (int)G_alpha) ;
+                            (int)ObjectGetPictureWidth(ri->p_obj),
+                            (int)ri->picHeight, (int)G_alpha) ;
                     MessageAdd((char *)buf) ;
                 }
             }

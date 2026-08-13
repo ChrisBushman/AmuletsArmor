@@ -118,6 +118,7 @@ static int          G_logicalBpp   = 0;
 static Uint32       G_gameFlags    = 0;    /* flags the game asked for      */
 static SDL_Surface *G_real         = NULL; /* the actual display surface    */
 static SDL_Surface *G_shadow       = NULL; /* what the game draws into      */
+static int          G_shotRequest  = 0;    /* F8 screenshot pending (captured at flip) */
 static int         *G_xmap         = NULL; /* dest x -> logical x           */
 static int         *G_ymap         = NULL; /* dest y -> logical y           */
 /* G_xmap is a nearest-neighbour upscale map, identical for every row and
@@ -906,6 +907,29 @@ static void ResScaleRaveComposite(void)
 /*--------------------------------------------------------------------------*/
 /* Public: per-frame present                                                */
 /*--------------------------------------------------------------------------*/
+/* F8 screenshot. The input loop (CLIENT.C) calls ResScaleRequestScreenshot();
+   the actual save happens here at the next present, when G_real holds the fully
+   composited frame (game UI + the RAVE 3D view laid over it) and is unlocked.
+   Writes AAshotNN.bmp into the app folder so software-vs-RAVE frames can be
+   compared as real images off-device. Session-incrementing name -- copy the
+   BMPs off between runs (a later run restarts the numbering). */
+void ResScaleRequestScreenshot(void)
+{
+    G_shotRequest = 1;
+}
+
+static void IMaybeSaveShot(void)
+{
+    static int shotNum = 0;
+    char       name[32];
+
+    if ((!G_shotRequest) || (G_real == NULL))
+        return;
+    G_shotRequest = 0;
+    sprintf(name, "AAshot%02d.bmp", shotNum++);
+    SDL_SaveBMP(G_real, name);   /* G_real is unlocked at both flip sites */
+}
+
 void ResScaleUpdate(void)
 {
     Uint32       lut[256];
@@ -927,6 +951,7 @@ void ResScaleUpdate(void)
         return;
 
     if ((!G_enabled) || (G_shadow == G_real))  {
+        IMaybeSaveShot();
         SDL_Flip(G_real);
         return;
     }
@@ -1063,6 +1088,7 @@ void ResScaleUpdate(void)
     ResScaleRaveComposite() ;
 
     __ppStart = PerfProfNow() ;
+    IMaybeSaveShot();
     SDL_Flip(G_real);
     PerfProfRecord(&__ppSlotFlip, "ResScaleUpdate/flip", __ppStart) ;
 }
