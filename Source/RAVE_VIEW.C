@@ -38,8 +38,6 @@
 #include "MEMORY.H"    /* MemAlloc()/MemFree()                               */
 #include "PICS.H"      /* PictureGetWidth()/PictureGetHeight()               */
 #include "ENDIAN_AA.H" /* EndianLE16() -- sprite raster column offsets       */
-#include "MESSAGE.H"   /* MessageAdd() -- TEMP sky-upload diagnostic         */
-#include <stdio.h>     /* sprintf()    -- TEMP sky-upload diagnostic         */
 
 /*-------------------------------------------------------------------------*
  * RAVE engine + draw context (rave-1) and their backing device/clip.
@@ -344,53 +342,8 @@ static TQATexture *IRaveUploadSprite(T_byte8 *p_picture, T_word16 w, T_word16 h)
 
     GrGetPalette(0, 256, pal) ;
 
-#if 0
-    /* TEMP CROP DIAGNOSTIC (Phase 2): fill the whole logical sprite rect
-       [0..w)x[0..h) with 4 OPAQUE horizontal bands by texture-row quarter,
-       ignoring the column decode -- so the billboard shows the full sprite
-       texture rect regardless of what the decode produces. Bands by texture row:
-         row [0 .. h/4)   = RED     (blue at the OPPOSITE end, see mapping)
-         row [h/4 .. h/2) = YELLOW
-         row [h/2 .. 3h/4)= GREEN
-         row [3h/4 .. h)  = BLUE
-       Because sprites use the wall v-flip (v=picHeight at the screen TOP corner,
-       v=0 at bottom), texture row 0 maps to the screen BOTTOM: so on screen you
-       should see, top->bottom, BLUE, GREEN, YELLOW, RED, each ~1/4 of the sprite.
-       Reads in ONE hardware trip:
-         - all 4 bands, full height  => geometry+UV correct; crop is in the DECODE.
-         - fewer bands / short        => crop is in the billboard geometry/UV, and
-                                         the MISSING colors tell which texture rows
-                                         (which sprite end) are being lost.
-       Set this block back to #if 0 to restore the real decode below. */
-    {
-        T_word16 rr, cc ;
-        (void)cols ;
-        /* Fill the ENTIRE POT texture (content AND padding) so the exact v->screen
-           mapping is unambiguous:
-             CONTENT rows [0,h)   : smooth vertical gradient, pure RED at row 0 ->
-                                    pure BLUE at row h-1.
-             PADDING rows [h,potH): opaque GREEN.
-           Read on screen: a full red..blue gradient with NO green => v maps the
-           whole content, mapping is correct; only PART of the gradient => that's
-           the v-range actually sampled (red/blue ends give orientation, the rest
-           is the crop); any GREEN => the quad samples past the content into the
-           POT padding (v-range or normalization is wrong). */
-        for (rr = 0 ; rr < potH ; rr++) {
-            unsigned short color ;
-            if (rr < vpad) {
-                color = (unsigned short)(0x8000 | (0x1F << 5)) ;      /* green = POT padding (above content) */
-            } else {
-                T_word16 crow = (T_word16)(rr - vpad) ;               /* 0..h-1 content row */
-                T_word16 b5 = (T_word16)((h > 1) ? ((T_word32)crow * 31) / (h - 1) : 0) ;
-                T_word16 r5 = (T_word16)(31 - b5) ;
-                color = (unsigned short)(0x8000 | (r5 << 10) | b5) ;  /* red@top -> blue@bottom */
-            }
-            for (cc = 0 ; cc < potW ; cc++)
-                buf[(T_word32)rr * potW + cc] = color ;
-        }
-    }
-#else
-    /* Decode each column's opaque run into the row-major POT buffer. */
+    /* Decode each column's opaque run into the row-major POT buffer. Content is
+       placed BOTTOM-aligned (rows [vpad,potH)) because RAVE samples V upward. */
     for (col = 0 ; col < w ; col++) {
         T_byte8 st = cols[col].start ;
         T_byte8 en = cols[col].end ;
@@ -405,7 +358,6 @@ static TQATexture *IRaveUploadSprite(T_byte8 *p_picture, T_word16 w, T_word16 h)
         for (r = st ; r <= en ; r++)
             buf[(T_word32)(vpad + r) * potW + col] = IRaveArgb16(pal, colBase[r]) ;
     }
-#endif
 
     image.width    = (long)potW ;
     image.height   = (long)potH ;
@@ -840,7 +792,7 @@ T_void RaveViewEmitQuad(
    (index 0 is a real sky color here, not transparent). Cached by pointer. */
 static TQATexture *IRaveUploadFlat(T_byte8 *raw, T_word16 w, T_word16 h)
 {
-    T_word16        potW, potH, col, row ;
+    T_word16        potW, potH, col, row, vpad ;
     unsigned short *buf ;
     T_palette       pal ;
     TQAImage        image ;
@@ -851,6 +803,9 @@ static TQATexture *IRaveUploadFlat(T_byte8 *raw, T_word16 w, T_word16 h)
         return NULL ;
     potW = INextPow2(w) ;
     potH = INextPow2(h) ;
+    /* Bottom-align content, rows [vpad,potH), same as sprites -- RAVE samples V
+       upward, so the sky emitter's v=[0,h] range hits the real content. */
+    vpad = (T_word16)(potH - h) ;
     buf = (unsigned short *)MemAlloc((T_word32)potW * (T_word32)potH * 2UL) ;
     if (buf == NULL)
         return NULL ;
@@ -859,7 +814,7 @@ static TQATexture *IRaveUploadFlat(T_byte8 *raw, T_word16 w, T_word16 h)
     GrGetPalette(0, 256, pal) ;
     for (row = 0 ; row < h ; row++) {
         T_byte8        *src = raw + (T_word32)row * w ;
-        unsigned short *dst = buf + (T_word32)row * potW ;
+        unsigned short *dst = buf + (T_word32)(vpad + row) * potW ;
         for (col = 0 ; col < w ; col++) {
             T_byte8 idx = src[col] ;
             dst[col] = (unsigned short)(0x8000 |
@@ -867,6 +822,19 @@ static TQATexture *IRaveUploadFlat(T_byte8 *raw, T_word16 w, T_word16 h)
                        (((pal[idx][1] & 0x3F) >> 1) <<  5) |
                         ((pal[idx][2] & 0x3F) >> 1)) ;
         }
+    }
+    /* Clamp the top edge: replicate content row 0 (image row vpad) up through the
+       transparent POT padding [0,vpad). RAVE's V sampling can round a texel past
+       the content into the pad; without this that shows as a transparent (black)
+       band at the top of the sky when pitched. Filling the pad with the top cloud
+       row makes any overshoot show the top cloud instead -- exactly software's
+       backdropRow clamp (3D_VIEW.C:5163). Content reaches the image bottom
+       (row potH-1), so no bottom pad to clamp. */
+    {
+        T_word16 rr, cc ;
+        for (rr = 0 ; rr < vpad ; rr++)
+            for (cc = 0 ; cc < potW ; cc++)
+                buf[(T_word32)rr * potW + cc] = buf[(T_word32)vpad * potW + cc] ;
     }
     image.width = potW ; image.height = potH ; image.rowBytes = potW * 2 ; image.pixmap = buf ;
     err = QATextureNew(G_raveEngine, kQATexture_None, kQAPixel_ARGB16, &image, &tex) ;
@@ -901,19 +869,8 @@ T_void RaveViewEmitSky(
     if (!RaveViewIsActive())
         return ;
     tex = IRaveGetFlat(raw, w, h) ;
-    if (tex == NULL) {
-        /* TEMP DIAGNOSTIC (remove after): the backdrop POTs up to 1024 wide;
-           if the engine rejects that texture size the sky is silently black.
-           Throttled report so we can see whether that's why. */
-        static T_word16 s_skyTick = 0 ;
-        if (((s_skyTick++) % 120) == 0) {
-            T_byte8 b[64] ;
-            sprintf((char *)b, "SKY tex NULL w=%d h=%d pot=%dx%d",
-                    (int)w, (int)h, (int)INextPow2(w), (int)INextPow2(h)) ;
-            MessageAdd((char *)b) ;
-        }
+    if (tex == NULL)
         return ;
-    }
     IRaveDrawTexturedQuad(tex,
         (float)INextPow2(w), (float)INextPow2(h), 1.0f,
         topLeft, bottomLeft, bottomRight, topRight) ;

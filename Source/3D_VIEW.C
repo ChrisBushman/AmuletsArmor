@@ -24,7 +24,6 @@
 #include "MEMORY.H"
 #include "PICS.H"
 #include "RAVE_VIEW.H"   /* rave-5: emit wall geometry to the RAVE HW backend */
-#include "MESSAGE.H"     /* MessageAdd -- temporary RAVE sprite diagnostic */
 #include "TICKER.H"
 #include "VIEW.H"
 
@@ -1588,41 +1587,73 @@ INDICATOR_LIGHT(114, INDICATOR_GREEN) ;
            depth (z~1) so walls/ceilings occlude it; it shows only where a sky
            ceiling leaves a gap. Indoor maps have G_backdrop==NULL -> skipped. */
         if ((G_backdrop != NULL) && (VIEW3D_WIDTH > 0)) {
+            /* Cover the WHOLE ceiling/sky region [0,bdH) so the sky never goes
+               black when pitched. Mirror the software backdrop sampling
+               (IDrawFloorRun): content row = clamp(row - G_alpha, 0, bdH-1), so
+               the top/bottom cloud rows just repeat past the panorama. The flat is
+               POT-padded and (like sprites) BOTTOM-aligned, so with RAVE's V-up
+               sampling a content row cr sits at texel v = bdH - cr (v=[0,bdH],
+               RaveViewEmitSky normalizes by INextPow2(bdH)). Emit up to 3 vertical
+               bands per horizontal segment: top clamp (cr=0, v=bdH), the linear
+               panorama, bottom clamp (cr=bdH-1, v=1). Two horizontal segments
+               handle the panorama wrap. */
             T_sword32 bdW  = (T_sword32)VIEW3D_WIDTH << 1 ;
             T_sword32 bdH  = VIEW3D_HALF_HEIGHT ;
             T_sword32 off  = G_backdropOffset ;
+            T_sword32 G    = G_alpha ;
             float     zf   = 0.9999f, iw = 0.0001f ;
-            float     syT  = (float)G_alpha ;
-            float     syB  = (float)(G_alpha + bdH) ;
-            /* When pitched UP, G_alpha>0 pushes the panorama's top edge (syT) down
-               the screen and the view above it was left BLACK. Extend the quad's
-               top up to the view top (y=0) so the sky fills it. (Looking down,
-               syT<0 already covers the top, so leave it.) The panorama stretches
-               slightly into the added band -- fine for a low-detail sky backdrop. */
-            float     topY = (syT < 0.0f) ? syT : 0.0f ;
-            T_sword32 seg1 ;
-            T_raveVertex a, b, c, d ;
+            T_sword32 seg1, pt, pb, s ;
+            T_sword32 segX0[2], segX1[2], segU0[2], segU1[2] ;
+            int       nseg ;
+            float     vTopClamp, vBotClamp ;
 
             if (off < 0)   off = 0 ;
             if (off > bdW) off = bdW ;
             seg1 = bdW - off ;
             if (seg1 > VIEW3D_WIDTH) seg1 = VIEW3D_WIDTH ;
 
-            /* segment 1: screen x [0..seg1], backdrop u [off..off+seg1] */
-            a.x=0.0f;        a.y=topY; a.z=zf; a.invW=iw; a.u=(float)off;        a.v=0.0f;       a.light=1.0f ;
-            b.x=0.0f;        b.y=syB; b.z=zf; b.invW=iw; b.u=(float)off;        b.v=(float)bdH; b.light=1.0f ;
-            c.x=(float)seg1; c.y=syB; c.z=zf; c.invW=iw; c.u=(float)(off+seg1); c.v=(float)bdH; c.light=1.0f ;
-            d.x=(float)seg1; d.y=topY; d.z=zf; d.invW=iw; d.u=(float)(off+seg1); d.v=0.0f;       d.light=1.0f ;
-            RaveViewEmitSky(G_backdrop, (T_word16)bdW, (T_word16)bdH, &a, &b, &c, &d) ;
-
-            /* segment 2 (wrapped): screen x [seg1..VIEW3D_WIDTH], u [0..rem] */
+            segX0[0]=0;    segX1[0]=seg1;         segU0[0]=off; segU1[0]=off+seg1 ;
+            nseg = 1 ;
             if (seg1 < VIEW3D_WIDTH) {
-                T_sword32 rem = (T_sword32)VIEW3D_WIDTH - seg1 ;
-                a.x=(float)seg1;         a.y=topY; a.z=zf; a.invW=iw; a.u=0.0f;       a.v=0.0f;       a.light=1.0f ;
-                b.x=(float)seg1;         b.y=syB; b.z=zf; b.invW=iw; b.u=0.0f;       b.v=(float)bdH; b.light=1.0f ;
-                c.x=(float)VIEW3D_WIDTH; c.y=syB; c.z=zf; c.invW=iw; c.u=(float)rem; c.v=(float)bdH; c.light=1.0f ;
-                d.x=(float)VIEW3D_WIDTH; d.y=topY; d.z=zf; d.invW=iw; d.u=(float)rem; d.v=0.0f;       d.light=1.0f ;
-                RaveViewEmitSky(G_backdrop, (T_word16)bdW, (T_word16)bdH, &a, &b, &c, &d) ;
+                segX0[1]=seg1; segX1[1]=VIEW3D_WIDTH; segU0[1]=0; segU1[1]=VIEW3D_WIDTH-seg1 ;
+                nseg = 2 ;
+            }
+
+            pt = G ;        if (pt < 0) pt = 0 ; if (pt > bdH) pt = bdH ;   /* panorama top row  */
+            pb = G + bdH ;  if (pb < 0) pb = 0 ; if (pb > bdH) pb = bdH ;   /* panorama bottom   */
+            vTopClamp = (float)(bdH - 1) ;               /* cr=0      -> top cloud row (v=bdH-1; */
+            vBotClamp = 0.0f ;                           /* cr=bdH-1  -> horizon row  (v=0). Map */
+                                                         /* content over v in [0,bdH-1]: v=bdH is */
+                                                         /* 1 texel into the transparent POT pad. */
+
+            for (s = 0 ; s < nseg ; s++) {
+                float x0 = (float)segX0[s], x1 = (float)segX1[s] ;
+                float u0 = (float)segU0[s], u1 = (float)segU1[s] ;
+                T_raveVertex a, b, c, d ;
+
+                a.z=zf; a.invW=iw; a.light=1.0f ;   b.z=zf; b.invW=iw; b.light=1.0f ;
+                c.z=zf; c.invW=iw; c.light=1.0f ;   d.z=zf; d.invW=iw; d.light=1.0f ;
+                a.x=x0; b.x=x0; c.x=x1; d.x=x1 ;
+                a.u=u0; b.u=u0; c.u=u1; d.u=u1 ;
+
+                if (pt > 0) {                         /* top clamp band [0,pt) */
+                    a.y=0.0f; d.y=0.0f; b.y=(float)pt; c.y=(float)pt ;
+                    a.v=vTopClamp; b.v=vTopClamp; c.v=vTopClamp; d.v=vTopClamp ;
+                    RaveViewEmitSky(G_backdrop,(T_word16)bdW,(T_word16)bdH,&a,&b,&c,&d) ;
+                }
+                if (pb > pt) {                        /* panorama band [pt,pb) */
+                    float vT = (float)((bdH - 1) - (pt - G)) ;
+                    float vB = (float)((bdH - 1) - (pb - G)) ;
+                    if (vB < vBotClamp) vB = vBotClamp ;   /* don't sample past the horizon row */
+                    a.y=(float)pt; d.y=(float)pt; b.y=(float)pb; c.y=(float)pb ;
+                    a.v=vT; d.v=vT; b.v=vB; c.v=vB ;
+                    RaveViewEmitSky(G_backdrop,(T_word16)bdW,(T_word16)bdH,&a,&b,&c,&d) ;
+                }
+                if (pb < bdH) {                       /* bottom clamp band [pb,bdH) */
+                    a.y=(float)pb; d.y=(float)pb; b.y=(float)bdH; c.y=(float)bdH ;
+                    a.v=vBotClamp; b.v=vBotClamp; c.v=vBotClamp; d.v=vBotClamp ;
+                    RaveViewEmitSky(G_backdrop,(T_word16)bdW,(T_word16)bdH,&a,&b,&c,&d) ;
+                }
             }
         }
 #endif /* macintosh && AA_RENDERER_RAVE */
@@ -4560,27 +4591,6 @@ T_void IDrawObjectAndWallRuns(T_void)
        until rave-7). Alpha-test cutout (rave-4) drops transparent texels. */
     {
         T_word16 o ;
-
-        /* TEMP DIAGNOSTIC (remove after): dump object 0's depth + the sprite z it
-           gets, its screen extent, and the sky-backdrop status, throttled -- so we
-           can compare the sprite z against the floor z (dumped in IDrawFloorRun)
-           and see whether the crop is depth-occlusion, plus confirm the backdrop
-           exists for the sky. */
-        {
-            static T_word16 s_diagTick = 0 ;
-            if ((G_objectCount > 0) && (((s_diagTick++) % 90) == 0)) {
-                T_3dObjectRunInfo *ri = &G_objectRun[0].runInfo ;
-                if ((ri->p_obj != NULL) && (ri->p_picture != NULL)) {
-                    T_byte8 buf[80] ;
-                    sprintf((char *)buf, "o0 d=%d t=%d rb=%d pw=%d ph=%d a=%d",
-                            (int)ri->distance,
-                            (int)ri->top, (int)ri->realBottom,
-                            (int)ObjectGetPictureWidth(ri->p_obj),
-                            (int)ri->picHeight, (int)G_alpha) ;
-                    MessageAdd((char *)buf) ;
-                }
-            }
-        }
 
         for (o = 0 ; o < G_objectCount ; o++) {
             T_3dObjectRun     *p_or  = &G_objectRun[o] ;
