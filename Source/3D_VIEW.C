@@ -2814,10 +2814,16 @@ static float IRaveInvW(float depth)
     return 1.0f / depth ;
 }
 
-/* invW -> depth-buffer z in 0..1 (hyperbolic; near ~0, far -> 1). */
+/* invW -> depth-buffer z in 0..1 (hyperbolic; near ~0, far -> 1).
+   Perspective depth with near=1 world unit and far=9999 (the engine's max-depth
+   clamp, 3D_VIEW.C ZMIN/9999 bounds): z = ZFAR/(ZFAR-1) * (1 - invW), i.e.
+   ~ (1 - invW). invW = 1/worldDepth, so depth=1 -> 0 and depth->9999 -> ~1,
+   monotonic and spreading NEAR geometry across the whole range. The old
+   1 - invW*16 collapsed everything closer than depth 16 into a single z=0
+   bucket, giving z-fighting / wrong occlusion up close (the magic 16). */
 static float IRaveZ(float invW)
 {
-    float z = 1.0f - invW * 16.0f ;
+    float z = 1.0001f * (1.0f - invW) ;   /* ZFAR/(ZFAR-1), near=1, far=9999 */
     if (z < 0.0f) z = 0.0f ;
     if (z > 1.0f) z = 1.0f ;
     return z ;
@@ -2935,7 +2941,13 @@ INDICATOR_LIGHT(829, INDICATOR_RED) ;
        RAVE z-buffer handles occlusion, so we emit the full wall (no software
        column-occlusion clip needed). sx1/sx2 are still the true wall extent
        here (the CLIP_LEFT clamp below hasn't run yet). Runs alongside the
-       software raster (which still draws + is shown until rave-7). */
+       software raster (which still draws + is shown until rave-7).
+       NOTE: the near plane is already handled upstream -- IIsSegmentGood clamps
+       both wall ends to ZMIN (10 units) and interpolates X along the tangent
+       line before IAddWall is ever called, so a wall crossing the eye is clipped
+       (not dropped) and relativeFromZ/ToZ here are always >= 10. The >0 guard
+       below is therefore just a belt-and-suspenders check, never a whole-wall
+       reject; no extra near-plane split is needed. */
     if ((G_wall.p_texture != NULL) && (relativeFromZ > 0) && (relativeToZ > 0)) {
         T_raveVertex rvTL, rvBL, rvBR, rvTR ;
         T_sword32    hoxL = (T_sword32)sx1 - VIEW3D_HALF_WIDTH ;

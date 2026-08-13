@@ -311,6 +311,35 @@ T_void ColorUpdate (T_word16 delta)
 
 
 /*-------------------------------------------------------------------------*
+ * Routine:  ColorGetTintDelta
+ *-------------------------------------------------------------------------*/
+/**
+ *  ColorGetTintDelta reports the current DYNAMIC global palette tint offset
+ *  (the damage/pickup flash + fades) as a per-channel signed value in 6-bit
+ *  VGA space (-63..63). This is the (G_rval+G_rfilt) part that ColorUpdate adds
+ *  on top of the base palette every frame -- it is NOT baked into textures.
+ *
+ *  The RAVE hardware renderer bakes the palette into its textures at upload, so
+ *  these live per-frame offsets never reach the baked scene; RaveViewFrameEnd
+ *  re-applies this delta to its RGB555 read-back to restore the flashes/fades.
+ *  Gamma is a constant and is already baked at upload, so it is excluded here.
+ *  Returns 0 when the global color effect is compiled out (OPTIONS_COLORON),
+ *  matching what ColorUpdate actually pushes to the palette.
+ *
+ *<!-----------------------------------------------------------------------*/
+T_void ColorGetTintDelta (T_sword16 *red, T_sword16 *green, T_sword16 *blue)
+{
+#ifdef OPTIONS_COLORON
+	*red   = G_rval + G_rfilt ;
+	*green = G_gval + G_gfilt ;
+	*blue  = G_bval + G_bfilt ;
+#else
+	*red = *green = *blue = 0 ;
+#endif
+}
+
+
+/*-------------------------------------------------------------------------*
  * Routine:  ColorGlowUpdate
  *-------------------------------------------------------------------------*/
 /**

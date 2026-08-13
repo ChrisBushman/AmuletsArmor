@@ -34,6 +34,7 @@
 #include "3D_VIEW.H"   /* View3dGetView() -- camera; VIEW3D_* viewport dims */
 #include "3D_IO.H"     /* G_3d{Upper,Lower,Main,Floor,Ceiling}TextureArray   */
 #include "GRAPHICS.H"  /* GrGetPalette(), T_palette                          */
+#include "COLOR.H"     /* ColorGetTintDelta() -- reapply live palette tint   */
 #include "MEMORY.H"    /* MemAlloc()/MemFree()                               */
 #include "PICS.H"      /* PictureGetWidth()/PictureGetHeight()               */
 #include "ENDIAN_AA.H" /* EndianLE16() -- sprite raster column offsets       */
@@ -210,13 +211,25 @@ static unsigned short IRaveArgb16(const T_palette pal, T_byte8 idx)
     return (unsigned short)(0x8000 | (r5 << 10) | (g5 << 5) | b5) ;
 }
 
+static T_word16 INextPow2(T_word16 v) ;   /* defined below; used to POT-pad */
+
 /* Upload a single AA texture (column-major, 8-bit palettized, pointer past
    its 4-byte w/h header) to a new ARGB16 TQATexture.  Returns NULL if the
-   texture is unusable (bad size / non-power-of-two / alloc or RAVE failure);
-   NULL is cached too, so we don't retry a known-bad texture every frame. */
+   texture is unusable (bad size / alloc or RAVE failure); NULL is cached too,
+   so we don't retry a known-bad texture every frame.
+
+   RAVE requires power-of-two textures. ~89% of AA's wall/floor textures already
+   are (64x64, 128x128, ...), but ~11% are not (decals, switches, a few
+   320x200); those were previously REJECTED, leaving their surfaces as holes.
+   Instead, pad any non-POT texture up into a transparent power-of-two buffer,
+   placing the real texels at [0..w) x [0..h). RaveViewEmitQuad normalizes u,v
+   by the POT size (INextPow2) to match, so POT textures are unchanged (potW==w)
+   and non-POT textures sample the correct sub-rect. A non-POT texture that
+   *tiles* may show its transparent pad at the wrap edge, but most non-POT
+   textures are non-tiling decals, so this recovers nearly all missing surfaces. */
 static TQATexture *IRaveUploadTexture(T_byte8 *p)
 {
-    T_word16        w, h ;
+    T_word16        w, h, potW, potH ;
     unsigned short *buf ;
     T_palette       pal ;
     TQAImage        image ;
@@ -230,33 +243,34 @@ static TQATexture *IRaveUploadTexture(T_byte8 *p)
     w = PictureGetWidth(p) ;
     h = PictureGetHeight(p) ;
 
-    /* RAVE textures must be power-of-two and non-degenerate.  AA's textures
-       already are (64x64, 128x128, ...); reject anything else rather than
-       feed the engine an illegal image. */
     if ((w == 0) || (h == 0) || (w > 1024) || (h > 1024))
         return NULL ;
-    if ((w & (w - 1)) != 0 || (h & (h - 1)) != 0)
-        return NULL ;
 
-    buf = (unsigned short *)MemAlloc((T_word32)w * (T_word32)h * 2UL) ;
+    potW = INextPow2(w) ;
+    potH = INextPow2(h) ;
+
+    buf = (unsigned short *)MemAlloc((T_word32)potW * (T_word32)potH * 2UL) ;
     if (buf == NULL)
         return NULL ;
+    /* Transparent pad first (only matters when potW>w / potH>h). */
+    { T_word32 n = (T_word32)potW * (T_word32)potH, k ;
+      for (k = 0 ; k < n ; k++) buf[k] = 0 ; }
 
     GrGetPalette(0, 256, pal) ;
 
     /* AA stores textures column-major: texel(col,row) at p[col*h + row].
-       Emit a standard row-major image: dst[row*w + col].  Texel orientation
-       vs RAVE's UV space is handled by the UV mapping in rave-5. */
+       Emit row-major into the POT buffer: dst[row*potW + col]. Texel
+       orientation vs RAVE's UV space is handled by the UV mapping in rave-5. */
     for (col = 0 ; col < w ; col++) {
         T_byte8        *srcCol = p + ((T_word32)col * h) ;
         unsigned short *dstCol = buf + col ;
         for (row = 0 ; row < h ; row++)
-            dstCol[(T_word32)row * w] = IRaveArgb16(pal, srcCol[row]) ;
+            dstCol[(T_word32)row * potW] = IRaveArgb16(pal, srcCol[row]) ;
     }
 
-    image.width    = (long)w ;
-    image.height   = (long)h ;
-    image.rowBytes = (long)w * 2 ;
+    image.width    = (long)potW ;
+    image.height   = (long)potH ;
+    image.rowBytes = (long)potW * 2 ;
     image.pixmap   = buf ;
 
     /* Default flags copy the image into engine/VRAM storage, so buf is ours
@@ -270,9 +284,9 @@ static TQATexture *IRaveUploadTexture(T_byte8 *p)
     return tex ;
 }
 
-/* Smallest power-of-two >= v (>=1). RAVE textures must be power-of-two; AA
-   wall/floor textures already are, but sprites are arbitrary-sized and get
-   padded up to this in a transparent POT buffer. */
+/* Smallest power-of-two >= v (>=1). RAVE textures must be power-of-two; walls,
+   floors and sprites are all padded up to this in a transparent POT buffer
+   (walls/floors in IRaveUploadTexture, sprites in IRaveUploadSprite). */
 static T_word16 INextPow2(T_word16 v)
 {
     T_word16 p = 1 ;
@@ -494,7 +508,12 @@ static T_void IRaveSetRenderState(TQADrawContext *ctx)
     QASetInt(ctx, kQATag_TextureFilter, kQATextureFilter_Best) ;
 
     /* Modulate the texture by the per-vertex diffuse color so rave-5's gouraud
-       sector lighting darkens/brightens the texels. */
+       sector lighting darkens/brightens the texels.
+       Texture wrap: RAVE REPEATS by default; clamping is opt-in via the
+       kQATextureOp_Clamp_U/_V bits, which we deliberately do NOT OR in here, so
+       walls (whose u exceeds the texture width to tile) wrap correctly. We keep
+       this as the documented default rather than setting a clamp bit; verify on
+       hardware that a tiling wall shows repeats (not one stretched copy). */
     QASetInt(ctx, kQATag_TextureOp, kQATextureOp_Modulate) ;
 
     /* Alpha-test cutout: our ARGB16 textures put alpha=0 on palette index 0
@@ -630,6 +649,35 @@ T_void RaveViewFrameEnd(T_void)
                 break ;
             }
         }
+
+        /* rave: reapply the live global palette tint (damage/pickup flash and
+           fades) that COLOR.C pushes into the palette each frame via
+           GrSetPalette. RAVE bakes the palette into its textures at upload, so
+           this dynamic offset never reaches the baked scene -- add it here on
+           the RGB555 read-back (6-bit VGA delta >>1 to 5-bit, per channel,
+           clamped). Skipped entirely when no tint is active, so the common
+           (no-flash) case pays nothing. Gamma is already baked at upload and is
+           excluded (see ColorGetTintDelta). */
+        {
+            T_sword16 tr = 0, tg = 0, tb = 0 ;
+            ColorGetTintDelta(&tr, &tg, &tb) ;
+            if (tr || tg || tb) {
+                int dr = (int)tr / 2, dg = (int)tg / 2, db = (int)tb / 2 ;
+                for (r = 0 ; r < rows ; r++) {
+                    T_word16 *d = G_raveFrameBuf + (T_word32)r * G_raveFrameW ;
+                    for (c = 0 ; c < cols ; c++) {
+                        int r5 = (d[c] >> 10) & 0x1F ;
+                        int g5 = (d[c] >>  5) & 0x1F ;
+                        int b5 =  d[c]        & 0x1F ;
+                        r5 += dr ; g5 += dg ; b5 += db ;
+                        if (r5 < 0) r5 = 0 ; else if (r5 > 31) r5 = 31 ;
+                        if (g5 < 0) g5 = 0 ; else if (g5 > 31) g5 = 31 ;
+                        if (b5 < 0) b5 = 0 ; else if (b5 > 31) b5 = 31 ;
+                        d[c] = (T_word16)((r5 << 10) | (g5 << 5) | b5) ;
+                    }
+                }
+            }
+        }
     }
 
     QAAccessDrawBufferEnd(G_raveContext, NULL) ;
@@ -743,8 +791,12 @@ T_void RaveViewEmitQuad(
     if (tex == NULL)
         return ;                        /* untextured / bad -> skip */
 
+    /* Normalize u,v by the POT size the texture was uploaded at (IRaveUploadTexture
+       pads non-POT textures up), NOT the logical size -- for POT textures these
+       are identical, for padded ones this samples the real [0..w)x[0..h) sub-rect. */
     IRaveDrawTexturedQuad(tex,
-        (float)PictureGetWidth(p_texture), (float)PictureGetHeight(p_texture),
+        (float)INextPow2(PictureGetWidth(p_texture)),
+        (float)INextPow2(PictureGetHeight(p_texture)),
         alpha, topLeft, bottomLeft, bottomRight, topRight) ;
 }
 
