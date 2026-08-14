@@ -124,12 +124,36 @@ typedef struct {
    compositor then leaves the software view showing. */
 E_Boolean RaveViewGetFrame(T_raveFrame *out) ;
 
+/* Profiling hooks: RESSCALE.C calls CompositeBegin() just before the composite
+   pixel loop and ProfileFrame() right after. ProfileFrame accumulates the RAVE
+   per-phase timings (upload/render/readback/composite) and periodically
+   MessageAdd()s an averaged ms/FPS line. No-ops on non-RAVE builds and when
+   profiling is compiled out. */
+T_void RaveViewProfileCompositeBegin(void) ;
+T_void RaveViewProfileFrame(void) ;
+
 /* rave-7 offload: TRUE once RAVE is successfully presenting frames -- the
    caller (3D_VIEW.C) then skips the software 3D raster since the HW view is
    composited over it. FALSE until the first frame is confirmed presented, and
    again after any failed present, so the software renderer always covers gaps
    (never a permanent black 3D view). Always FALSE on non-RAVE builds. */
 E_Boolean RaveViewIsPresenting(T_void) ;
+
+/* rave-9 direct-to-screen: TRUE when RAVE owns the fullscreen present (swaps its
+   own buffer at QARenderEnd). RESSCALE's ResScaleUpdate then skips its software
+   scale + RAVE composite + SDL_Flip so RAVE and SDL don't both drive the screen.
+   Always FALSE on non-RAVE builds and in the readback+composite path. */
+E_Boolean RaveViewIsDirectPresenting(T_void) ;
+
+/* rave-9: request an F8 screenshot of the RAVE direct-to-screen frame (the SDL
+   SaveBMP path can't see RAVE's own buffer). No-op on non-RAVE builds. */
+T_void RaveViewRequestShot(T_void) ;
+
+/* rave-9: called by RESSCALE at present time when RaveViewIsDirectPresenting().
+   ui8 is AA's 320x200 8-bit 2D frame (HUD/panels/weapon); RAVE draws it as a GPU
+   quad over the 3D (transparent in the view rect) and swaps to the fullscreen
+   display -- no readback, no CPU composite. No-op on non-RAVE builds. */
+T_void RaveViewDrawUIAndPresent(const T_byte8 *ui8, int sw, int sh, int pitch) ;
 
 /* Runtime software<->RAVE switch (in-game F-key hotkey + resolution.ini
    "renderer" option). SetEnabled(FALSE) makes the whole RAVE path dormant so

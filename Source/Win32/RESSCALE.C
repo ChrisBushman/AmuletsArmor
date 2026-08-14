@@ -836,6 +836,8 @@ static void ResScaleRaveComposite(void)
     if ((rw <= 0) || (rh <= 0))
         return ;
 
+    RaveViewProfileCompositeBegin() ;   /* profiler: time the composite pixel loop */
+
     if (SDL_MUSTLOCK(G_real))  {
         if (SDL_LockSurface(G_real) != 0)
             return ;
@@ -910,6 +912,8 @@ static void ResScaleRaveComposite(void)
 
     if (SDL_MUSTLOCK(G_real))
         SDL_UnlockSurface(G_real) ;
+
+    RaveViewProfileFrame() ;   /* profiler: roll this frame's phase timings + report */
 }
 
 /*--------------------------------------------------------------------------*/
@@ -926,16 +930,36 @@ void ResScaleRequestScreenshot(void)
     G_shotRequest = 1;
 }
 
+static int G_shotNum = 0;   /* shared by the SDL + RAVE-direct screenshot paths */
+
 static void IMaybeSaveShot(void)
 {
-    static int shotNum = 0;
     char       name[32];
 
     if ((!G_shotRequest) || (G_real == NULL))
         return;
     G_shotRequest = 0;
-    sprintf(name, "AAshot%02d.bmp", shotNum++);
+    sprintf(name, "AAshot%02d.bmp", G_shotNum++);
     SDL_SaveBMP(G_real, name);   /* G_real is unlocked at both flip sites */
+}
+
+/* rave-9: save an RGB555 buffer (RAVE's direct-to-screen frame, read back once on
+   F8) as AAshotNN.bmp. Same naming/counter as the SDL path so A/B frames stay in
+   sequence. bit15 unused; R=14:10 G=9:5 B=4:0. */
+void ResScaleSaveRaveShot(const void *rgb555, int w, int h, int pitchBytes)
+{
+    char         name[32];
+    SDL_Surface *s;
+
+    if ((rgb555 == NULL) || (w <= 0) || (h <= 0))
+        return;
+    s = SDL_CreateRGBSurfaceFrom((void *)rgb555, w, h, 16, pitchBytes,
+                                 0x7C00, 0x03E0, 0x001F, 0);
+    if (s == NULL)
+        return;
+    sprintf(name, "AAshot%02d.bmp", G_shotNum++);
+    SDL_SaveBMP(s, name);
+    SDL_FreeSurface(s);
 }
 
 void ResScaleUpdate(void)
@@ -957,6 +981,25 @@ void ResScaleUpdate(void)
 
     if (G_real == NULL)
         return;
+
+    /* rave-9 direct-to-screen: instead of the SDL scale/composite/flip, RAVE
+       draws the game's 2D UI frame as a GPU quad over the 3D (whose render pass
+       is still open) and swaps to the fullscreen display itself. Hand it the
+       8-bit 320x200 shadow frame; SDL never presents in this path. */
+    if (RaveViewIsDirectPresenting())  {
+        if ((G_shadow != NULL) && (G_shadow->format->BitsPerPixel == 8))  {
+            int locked = 1;
+            if (SDL_MUSTLOCK(G_shadow))
+                locked = (SDL_LockSurface(G_shadow) == 0);
+            if (locked)  {
+                RaveViewDrawUIAndPresent((const T_byte8 *)G_shadow->pixels,
+                                         G_shadow->w, G_shadow->h, G_shadow->pitch);
+                if (SDL_MUSTLOCK(G_shadow))
+                    SDL_UnlockSurface(G_shadow);
+            }
+        }
+        return;
+    }
 
     if ((!G_enabled) || (G_shadow == G_real))  {
         IMaybeSaveShot();
@@ -1292,6 +1335,17 @@ int ResScaleGetWindowWidth(void)
 int ResScaleGetWindowHeight(void)
 {
     return (G_real != NULL) ? G_real->h : 0;
+}
+
+/* rave-9: the letterboxed destination rect (where the game picture is drawn in
+   the window; borders stay black). RAVE's direct-to-screen path maps the 3D view
+   into this rect the same way ResScaleRaveComposite did. */
+void ResScaleGetDstRect(int *x, int *y, int *w, int *h)
+{
+    if (x != NULL) *x = G_dstX;
+    if (y != NULL) *y = G_dstY;
+    if (w != NULL) *w = G_dstW;
+    if (h != NULL) *h = G_dstH;
 }
 
 int ResScaleGetDetail(void)

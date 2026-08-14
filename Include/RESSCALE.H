@@ -73,6 +73,9 @@ void          ResScaleUpdate(void);
    Wired to F8 in the client input loop; used for software-vs-RAVE A/B compares. */
 void          ResScaleRequestScreenshot(void);
 
+/* rave-9: save an RGB555 buffer (RAVE direct-to-screen frame) as AAshotNN.bmp. */
+void          ResScaleSaveRaveShot(const void *rgb555, int w, int h, int pitchBytes);
+
 /* Call on every event obtained from SDL_PollEvent / SDL_WaitEvent.
    Rewrites mouse coordinates from window space back to the game's
    logical space, and (if hotkeys=1 in resolution.ini) consumes
@@ -91,6 +94,9 @@ int           ResScaleGetLogicalWidth(void);
 int           ResScaleGetLogicalHeight(void);
 int           ResScaleGetWindowWidth(void);
 int           ResScaleGetWindowHeight(void);
+
+/* rave-9: letterboxed destination rect inside the window (game picture area). */
+void          ResScaleGetDstRect(int *x, int *y, int *w, int *h);
 
 /* "Level of Detail" from resolution.ini (1..6, default 2) -- how many
    times larger than classic 320x200 the 3D view is actually rendered at.

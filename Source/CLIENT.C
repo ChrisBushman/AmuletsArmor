@@ -1172,7 +1172,12 @@ T_void ClientUpdate(T_void)
                 static E_Boolean s_prevF8 = FALSE ;
                 E_Boolean nowF8 = KeyboardGetScanCode(KEY_SCAN_CODE_F8) ;
                 if (nowF8 && !s_prevF8)  {
-                    ResScaleRequestScreenshot() ;
+                    /* rave-9: in direct-to-screen mode the SDL surface doesn't hold
+                       the RAVE frame -- capture RAVE's own buffer instead. */
+                    if (RaveViewIsDirectPresenting())
+                        RaveViewRequestShot() ;
+                    else
+                        ResScaleRequestScreenshot() ;
                     MessageAdd("Screenshot saved (AAshotNN.bmp)") ;
                 }
                 s_prevF8 = nowF8 ;

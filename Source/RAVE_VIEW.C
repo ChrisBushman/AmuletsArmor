@@ -38,6 +38,36 @@
 #include "MEMORY.H"    /* MemAlloc()/MemFree()                               */
 #include "PICS.H"      /* PictureGetWidth()/PictureGetHeight()               */
 #include "ENDIAN_AA.H" /* EndianLE16() -- sprite raster column offsets       */
+#include "MESSAGE.H"   /* MessageAdd() -- on-screen profiler readout         */
+#include <Timer.h>     /* Microseconds() -- per-phase RAVE profiling         */
+#include <stdio.h>     /* sprintf() for the profiler line                    */
+
+/*-------------------------------------------------------------------------*
+ * RAVE_PROFILE: lightweight per-phase timing. Accumulates upload / render /
+ * readback / composite microseconds over ~1s and MessageAdd()s an average +
+ * FPS line (shows in the on-screen log + F8 screenshots), so we can see which
+ * phase dominates before optimizing. Compile-time gated -- set to 0 to strip.
+ * RESSCALE.C feeds composite time in via RaveViewProfileFrame() at frame end.
+ *-------------------------------------------------------------------------*/
+#define RAVE_PROFILE 1
+#if RAVE_PROFILE
+static unsigned long G_profUploadUs   = 0 ;   /* this frame (reset FrameBegin) */
+static T_word16      G_profUploads    = 0 ;   /* this frame                    */
+static unsigned long G_profRenderUs   = 0 ;   /* this frame (FrameEnd)         */
+static unsigned long G_profReadbackUs = 0 ;   /* this frame (FrameEnd)         */
+static unsigned long G_accUpload = 0, G_accRender = 0 ;
+static unsigned long G_accReadback = 0, G_accComposite = 0 ;
+static unsigned long G_accUploads = 0, G_accFrames = 0 ;
+static unsigned long G_profLastReportUs = 0 ;
+static unsigned long G_profCompositeStart = 0 ;   /* set by CompositeBegin */
+
+static unsigned long IProfNowUs(void)
+{
+    UnsignedWide t ;
+    Microseconds(&t) ;
+    return t.lo ;   /* 32-bit us; unsigned subtraction handles the ~71min wrap */
+}
+#endif
 
 /*-------------------------------------------------------------------------*
  * RAVE engine + draw context (rave-1) and their backing device/clip.
@@ -73,6 +103,68 @@ static E_Boolean G_raveEnabled    = FALSE ;
    draws the frame with that UI on top. Separate from G_raveEnabled so it
    doesn't fight the F12/ini choice. */
 static E_Boolean G_raveSuspended  = FALSE ;
+
+/* rave-9 DIRECT-TO-SCREEN: when TRUE, RAVE swaps its own double buffer straight
+   to the fullscreen display (kQATag_DontSwap=0) at QARenderEnd -- no VRAM
+   readback, no CPU composite (the profiler showed those ~20ms + ~38ms are the
+   whole RAVE penalty). RESSCALE then skips its scale/composite/SDL_Flip. The 2D
+   UI is drawn by RAVE as a full-screen textured quad over the 3D. SPIKE STAGE:
+   present only (3D fills the context, no UI quad yet) to prove RAVE can own the
+   fullscreen display without fighting SDL. Requires fullscreen. */
+static E_Boolean G_raveDirectPresent = TRUE ;
+
+/* rave-9: screen-space transform for emitted 3D vertices. The BSP walk emits x,y
+   in the VIEW3D_WIDTH x VIEW3D_HEIGHT view space. In the readback path the context
+   IS that size (identity: Org=0, Scl=1). In direct-to-screen the context is the
+   full display, so the 3D is placed into the on-screen view rect: screen = Org +
+   emitted * Scl (Scl = viewRectSize / VIEW3D size). This also renders the geometry
+   at native screen resolution -- sharper than the old 300x140 upscale. */
+static float G_raveViewOrgX = 0.0f, G_raveViewOrgY = 0.0f ;
+static float G_raveViewSclX = 1.0f, G_raveViewSclY = 1.0f ;
+
+/* rave-9: the RAVE draw context renders to the PHYSICAL display (GetMainDevice),
+   but SDL's surface (G_real) is often smaller than the panel and SDL centers it
+   there. Software presents centered; RAVE would render at the device top-left.
+   So place the context's surface-sized buffer at the same centre (G_raveScrOff*)
+   and offset all content into it. G_raveDst* is the content (letterbox) rect in
+   DEVICE coords -- used by both the 3D transform and the UI quad so they align. */
+static int G_raveScrOffX = 0, G_raveScrOffY = 0 ;
+static int G_raveDstX = 0, G_raveDstY = 0, G_raveDstW = 0, G_raveDstH = 0 ;
+
+/* Physical main-display size in pixels (the panel resolution), for centering. */
+static void IRaveScreenSize(int *w, int *h)
+{
+    GDHandle gd = GetMainDevice() ;
+    *w = 0 ; *h = 0 ;
+    if (gd != NULL) {
+        Rect r = (**gd).gdRect ;
+        *w = (int)(r.right - r.left) ;
+        *h = (int)(r.bottom - r.top) ;
+    }
+}
+
+/* RESSCALE layout getters (forward-declared to avoid pulling the SDL-heavy
+   RESSCALE.H into this Mac file). */
+extern int  ResScaleGetWindowWidth(void) ;
+extern int  ResScaleGetWindowHeight(void) ;
+extern int  ResScaleGetLogicalWidth(void) ;
+extern int  ResScaleGetLogicalHeight(void) ;
+extern void ResScaleGetDstRect(int *x, int *y, int *w, int *h) ;
+extern void ResScaleSaveRaveShot(const void *rgb555, int w, int h, int pitchBytes) ;
+
+/* rave-9: F8 in direct-to-screen mode. Set (RaveViewRequestShot) by the input
+   loop; the next frame is rendered held (DontSwap) so FrameEnd can read the
+   just-drawn buffer once and save it, then presenting resumes. One-shot -> the
+   ~20ms read costs nothing in normal play. */
+static E_Boolean G_raveShotPending = FALSE ;
+
+/* rave-9 UI quad: AA's 320x200 2D frame (HUD/panels/weapon), uploaded each frame
+   as an ARGB16 texture and drawn by the GPU over the 3D. Transparent (alpha 0)
+   only in the view rect where the overlay is 0 (pure 3D background) so the 3D
+   shows through; opaque everywhere else. Rebuilt per frame (UI animates). */
+static TQATexture *G_raveUITex  = NULL ;
+static int         G_raveUIPotW = 0, G_raveUIPotH = 0 ;   /* POT texture size   */
+static int         G_raveUISW   = 0, G_raveUISH   = 0 ;   /* logical UI size    */
 
 /*-------------------------------------------------------------------------*
  * Texture cache (rave-2).  Keyed by the pixel pointer AA hands the software
@@ -175,28 +267,51 @@ T_void RaveViewInit(T_void)
     if (G_raveEngine == NULL)
         return ;                        /* no RAVE at all -> software path */
 
-    /* The 3D viewport in the game's logical (detail-scaled) pixels. The context
-       is exactly the VIEW3D_WIDTH x VIEW3D_HEIGHT logical view; the taps emit
-       screen X in that same 0..VIEW3D_WIDTH space, and the composite hook maps
-       this whole buffer onto the on-screen VIEW3D rect (ResScale offset/scale).
-       Renders to an offscreen VRAM back buffer (DontSwap in rave-4) and is read
-       back for compositing -- see rave-7. */
-    w = (long)VIEW3D_WIDTH ;
-    h = (long)VIEW3D_HEIGHT ;
+    /* Context size + placement depend on the present path:
+
+       readback (rave-7): context is exactly VIEW3D_WIDTH x VIEW3D_HEIGHT at the
+       device origin; the taps emit in that space (identity transform) and the
+       composite scales it onto the on-screen view rect.
+
+       direct-to-screen (rave-9): context buffer is SDL's surface size, but placed
+       CENTERED on the physical display (GetMainDevice) so it lands where SDL
+       centers its window -- not the device top-left. The per-frame transform
+       (IRaveUpdateViewTransform) then maps the VIEW3D geometry into the letterbox
+       rect in device coords. Keeping the buffer surface-sized (not panel-sized)
+       avoids extra VRAM. */
+    G_raveViewOrgX = 0.0f ; G_raveViewOrgY = 0.0f ;
+    G_raveViewSclX = 1.0f ; G_raveViewSclY = 1.0f ;
+    G_raveScrOffX  = 0 ;    G_raveScrOffY  = 0 ;
+    if (G_raveDirectPresent) {
+        int scrW = 0, scrH = 0 ;
+        int ctxW = ResScaleGetWindowWidth(), ctxH = ResScaleGetWindowHeight() ;
+        if (ctxW <= 0) ctxW = (int)VIEW3D_WIDTH ;
+        if (ctxH <= 0) ctxH = (int)VIEW3D_HEIGHT ;
+        IRaveScreenSize(&scrW, &scrH) ;
+        if (scrW < ctxW) scrW = ctxW ;      /* panel at least as big as the surface */
+        if (scrH < ctxH) scrH = ctxH ;
+        G_raveScrOffX = (scrW - ctxW) / 2 ; /* centre the surface on the panel */
+        G_raveScrOffY = (scrH - ctxH) / 2 ;
+        w = (long)ctxW ;
+        h = (long)ctxH ;
+    } else {
+        w = (long)VIEW3D_WIDTH ;
+        h = (long)VIEW3D_HEIGHT ;
+    }
     if (w <= 0) w = 1 ;
     if (h <= 0) h = 1 ;
 
-    rect.left   = 0 ;
-    rect.top    = 0 ;
-    rect.right  = w ;
-    rect.bottom = h ;
+    rect.left   = (short)G_raveScrOffX ;
+    rect.top    = (short)G_raveScrOffY ;
+    rect.right  = (short)(G_raveScrOffX + w) ;
+    rect.bottom = (short)(G_raveScrOffY + h) ;
 
     /* Rectangular clip covering the context rect. */
     G_raveClipRgn = NewRgn() ;
     if (G_raveClipRgn != NULL) {
-        Rect r ;
-        r.left = 0 ; r.top = 0 ; r.right = (short)w ; r.bottom = (short)h ;
-        SetRectRgn(G_raveClipRgn, r.left, r.top, r.right, r.bottom) ;
+        SetRectRgn(G_raveClipRgn,
+                   (short)G_raveScrOffX, (short)G_raveScrOffY,
+                   (short)(G_raveScrOffX + w), (short)(G_raveScrOffY + h)) ;
     }
     G_raveClip.clipType      = kQAClipRgn ;
     G_raveClip.clip.clipRgn  = G_raveClipRgn ;
@@ -218,10 +333,18 @@ T_void RaveViewInit(T_void)
         return ;
     }
 
-    /* rave-7: readback buffer matching the context size (RGB555). */
-    G_raveFrameW   = (T_word16)w ;
-    G_raveFrameH   = (T_word16)h ;
-    G_raveFrameBuf = (T_word16 *)MemAlloc((T_word32)w * (T_word32)h * 2UL) ;
+    /* rave-7: readback buffer (RGB555) sized to the context -- only the readback
+       path uses it. rave-9 direct-to-screen never reads back, so skip the (now
+       full-screen) allocation; G_raveFrameW/H keep the VIEW3D emit space. */
+    if (!G_raveDirectPresent) {
+        G_raveFrameW   = (T_word16)w ;
+        G_raveFrameH   = (T_word16)h ;
+        G_raveFrameBuf = (T_word16 *)MemAlloc((T_word32)w * (T_word32)h * 2UL) ;
+    } else {
+        G_raveFrameW   = (T_word16)VIEW3D_WIDTH ;
+        G_raveFrameH   = (T_word16)VIEW3D_HEIGHT ;
+        G_raveFrameBuf = NULL ;
+    }
     G_raveFrameReady = FALSE ;
 }
 
@@ -367,8 +490,14 @@ static TQATexture *IRaveUploadTexture(T_byte8 *p, T_sword16 level)
 
     /* Default flags copy the image into engine/VRAM storage, so buf is ours
        to free immediately after. */
+#if RAVE_PROFILE
+    { unsigned long _t = IProfNowUs() ;
+      err = QATextureNew(G_raveEngine, kQATexture_None, kQAPixel_CL8, &image, &tex) ;
+      G_profUploadUs += IProfNowUs() - _t ; G_profUploads++ ; }
+#else
     err = QATextureNew(G_raveEngine, kQATexture_None, kQAPixel_CL8,
                        &image, &tex) ;
+#endif
     MemFree(buf) ;
 
     if (err != kQANoErr)
@@ -469,8 +598,14 @@ static TQATexture *IRaveUploadSprite(T_byte8 *p_picture, T_word16 w, T_word16 h,
     image.rowBytes = (long)potW ;      /* 1 byte/pixel (CL8) */
     image.pixmap   = buf ;
 
+#if RAVE_PROFILE
+    { unsigned long _t = IProfNowUs() ;
+      err = QATextureNew(G_raveEngine, kQATexture_None, kQAPixel_CL8, &image, &tex) ;
+      G_profUploadUs += IProfNowUs() - _t ; G_profUploads++ ; }
+#else
     err = QATextureNew(G_raveEngine, kQATexture_None, kQAPixel_CL8,
                        &image, &tex) ;
+#endif
     MemFree(buf) ;
 
     if (err != kQANoErr)
@@ -667,10 +802,12 @@ static T_void IRaveSetRenderState(TQADrawContext *ctx)
              kQAChannelMask_r | kQAChannelMask_g |
              kQAChannelMask_b | kQAChannelMask_a) ;
 
-    /* rave-7: never swap the double buffer to the visible screen -- we composite
-       the back buffer into AA's SDL display ourselves. Without this, QARenderEnd
-       would flip the RAVE frame straight onto the screen and fight SDL. */
-    QASetInt(ctx, kQATag_DontSwap, 1) ;
+    /* rave-7/9: DontSwap=1 keeps the frame in the back buffer for the readback+
+       composite path (software present). DontSwap=0 lets QARenderEnd swap the
+       RAVE frame straight to the fullscreen display -- the direct-to-screen path
+       (rave-9), which owns the present and skips SDL_Flip. */
+    QASetInt(ctx, kQATag_DontSwap,
+             (G_raveDirectPresent && !G_raveShotPending) ? 0 : 1) ;
 }
 
 /*-------------------------------------------------------------------------*
@@ -707,12 +844,50 @@ T_void RaveViewFinish(T_void)
  * and, per visible wall, calls RaveViewEmitQuad() with the corners it already
  * projected. FrameBegin opens the render + clear; FrameEnd finishes it.
  *-------------------------------------------------------------------------*/
+/* rave-9: recompute the VIEW3D->screen transform from the CURRENT RESSCALE
+   layout. Done per frame (not once at RaveViewInit) because the letterbox rect
+   (G_dst*) isn't populated until after the first video-mode/map build, which can
+   be AFTER RaveViewInit -- so an init-time compute would fall back to identity
+   and leave the 3D in the top-left corner at native size. */
+static void IRaveUpdateViewTransform(void)
+{
+    int dx = 0, dy = 0, dw = 0, dh = 0 ;
+
+    if (!G_raveDirectPresent)
+        return ;                            /* readback path stays identity */
+    ResScaleGetDstRect(&dx, &dy, &dw, &dh) ;
+    if ((dw > 0) && (dh > 0)) {
+        /* All content coords are RECT-RELATIVE (0,0 = the context's top-left); the
+           centered context rect (G_raveScrOff*, set in RaveViewInit) does the
+           on-screen centering. So the letterbox rect is just the SDL letterbox
+           within the surface -- no centre offset here (that was double-shifting
+           the 3D relative to the UI). */
+        G_raveDstX = dx ;
+        G_raveDstY = dy ;
+        G_raveDstW = dw ;
+        G_raveDstH = dh ;
+        /* Map emitted VIEW3D coords into the SAME base-320x200 grid the UI texture
+           uses (origin 4,3; 1 emit unit = 1 base unit), then base->device. Using
+           320/200 (not logicalW/H) guarantees the 3D fills the UI's transparent
+           view hole exactly -- no black seam. */
+        G_raveViewOrgX = (float)G_raveDstX + (float)(4 * dw) / 320.0f ;
+        G_raveViewOrgY = (float)G_raveDstY + (float)(3 * dh) / 200.0f ;
+        G_raveViewSclX = (float)dw / 320.0f ;
+        G_raveViewSclY = (float)dh / 200.0f ;
+    }
+}
+
 T_void RaveViewFrameBegin(T_void)
 {
     if (!RaveViewIsActive())
         return ;
 
     G_raveFrameNum++ ;   /* for LRU (IRaveCacheFind/Add stamp lastUsed with this) */
+    IRaveUpdateViewTransform() ;   /* rave-9: keep the 3D placed in the view rect */
+
+#if RAVE_PROFILE
+    G_profUploadUs = 0 ; G_profUploads = 0 ;   /* uploads accumulate over this frame's emit */
+#endif
 
     /* rave-4: background must be set before QARenderStart, which (NULL initial
        context) clears the color + Z buffers to it. */
@@ -721,15 +896,254 @@ T_void RaveViewFrameBegin(T_void)
     IRaveSetRenderState(G_raveContext) ;
 }
 
+/* rave-9: read the just-rendered (held, un-swapped) buffer once and save it as a
+   BMP via RESSCALE. Called from FrameEnd only when an F8 shot is pending in
+   direct mode; the frame was rendered DontSwap so QAAccessDrawBuffer sees it. */
+static void IRaveSaveShot(void)
+{
+    TQAPixelBuffer pb ;
+    T_word16      *tmp ;
+    long           w, h, r, c ;
+
+    if (QAAccessDrawBuffer(G_raveContext, &pb) != kQANoErr)
+        return ;
+    w = pb.width ; h = pb.height ;
+    tmp = (T_word16 *)MemAlloc((T_word32)w * (T_word32)h * 2UL) ;
+    if (tmp != NULL) {
+        for (r = 0 ; r < h ; r++) {
+            T_byte8  *srcRow = (T_byte8 *)pb.baseAddr + (T_word32)r * pb.rowBytes ;
+            T_word16 *dstRow = tmp + (T_word32)r * w ;
+            switch (pb.pixelType) {
+            case kQAPixel_RGB16:
+            case kQAPixel_ARGB16: {
+                const unsigned short *s = (const unsigned short *)srcRow ;
+                for (c = 0 ; c < w ; c++) dstRow[c] = (T_word16)(s[c] & 0x7FFF) ;
+                break ; }
+            case kQAPixel_RGB16_565: {
+                const unsigned short *s = (const unsigned short *)srcRow ;
+                for (c = 0 ; c < w ; c++) {
+                    unsigned short p = s[c] ;
+                    dstRow[c] = (T_word16)((((p>>11)&0x1F)<<10)|(((p>>6)&0x1F)<<5)|(p&0x1F)) ;
+                }
+                break ; }
+            case kQAPixel_RGB32:
+            case kQAPixel_ARGB32: {
+                const unsigned long *s = (const unsigned long *)srcRow ;
+                for (c = 0 ; c < w ; c++) {
+                    unsigned long p = s[c] ;
+                    dstRow[c] = (T_word16)((((p>>19)&0x1F)<<10)|(((p>>11)&0x1F)<<5)|((p>>3)&0x1F)) ;
+                }
+                break ; }
+            default:
+                for (c = 0 ; c < w ; c++) dstRow[c] = 0 ;
+                break ;
+            }
+        }
+        ResScaleSaveRaveShot(tmp, (int)w, (int)h, (int)(w * 2)) ;
+        MemFree(tmp) ;
+    }
+    QAAccessDrawBufferEnd(G_raveContext, NULL) ;
+}
+
+/* rave-9: build the UI overlay texture from AA's 320x200 8-bit 2D frame. CL8
+   (indexed) -- HALF the upload of ARGB16 and no per-pixel palette conversion; the
+   shared unshaded palette table (index 0 = transparent) colours it, exactly like
+   the walls. Index 0 (transparent) ONLY inside the view rect where the overlay is
+   0 (pure 3D background); everywhere else the raw UI index, safe-black-substituted
+   for a genuine index-0 UI pixel so the HUD's black stays opaque. Rebuilt each
+   frame (UI animates); prior texture freed. */
+static void IRaveUploadUI(const T_byte8 *ui8, int sw, int sh, int pitch)
+{
+    const T_byte8  *ovl ;
+    T_byte8        *buf ;
+    int             potW, potH, vpad, x, y ;
+    int             vx0 = 4, vy0 = 3 ;                /* VIEW3D_ORIGIN_X/Y */
+    int             vx1 = 4 + (int)VIEW3D_WIDTH ;
+    int             vy1 = 3 + (int)VIEW3D_HEIGHT ;
+    TQAImage        image ;
+    TQAError        err ;
+    TQATexture     *tex = NULL ;
+
+    if (G_raveUITex != NULL) {
+        QATextureDelete(G_raveEngine, G_raveUITex) ;
+        G_raveUITex = NULL ;
+    }
+    if ((ui8 == NULL) || (sw <= 0) || (sh <= 0) || (sw > 1024) || (sh > 1024))
+        return ;
+
+    potW = (int)INextPow2((T_word16)sw) ;
+    potH = (int)INextPow2((T_word16)sh) ;
+    buf  = (T_byte8 *)MemAlloc((T_word32)potW * (T_word32)potH) ;   /* 1 byte/texel */
+    if (buf == NULL)
+        return ;
+    { T_word32 n = (T_word32)potW * (T_word32)potH, k ;
+      for (k = 0 ; k < n ; k++) buf[k] = 0 ; }     /* index 0 = transparent pad */
+
+    ovl = (const T_byte8 *)View3dGetOverlayScreen() ;   /* 320x200, 0 = 3D bg */
+
+    /* RAVE samples texture V upward (v=0 = bottom row), so the UI must sit flush
+       with the BOTTOM of the POT texture -- like sprites/flats. The quad then
+       maps screen-top->v=sh, screen-bottom->v=0 (see IRaveDrawUIQuad). */
+    vpad = potH - sh ;
+    for (y = 0 ; y < sh ; y++) {
+        const T_byte8 *srow = ui8 + (T_word32)y * pitch ;
+        T_byte8       *drow = buf + (T_word32)(vpad + y) * potW ;
+        for (x = 0 ; x < sw ; x++) {
+            /* transparent only where the 3D view shows: inside the view rect AND
+               the overlay is 0 (no 2D drawn over the view there). */
+            if ((x >= vx0) && (x < vx1) && (y >= vy0) && (y < vy1) &&
+                (ovl != NULL) && (ovl[(T_word32)y * 320 + x] == 0)) {
+                drow[x] = 0 ;                        /* transparent -> 3D shows */
+            } else {
+                T_byte8 idx = srow[x] ;
+                drow[x] = idx ? idx : G_raveSafeBlack ; /* opaque; keep black opaque */
+            }
+        }
+    }
+
+    image.width = potW ; image.height = potH ; image.rowBytes = potW ; image.pixmap = buf ;
+    err = QATextureNew(G_raveEngine, kQATexture_None, kQAPixel_CL8, &image, &tex) ;
+    MemFree(buf) ;
+    if (err == kQANoErr) {
+        if (G_paletteTable == NULL) IPaletteTable() ;
+        if (G_paletteTable != NULL)
+            QATextureBindColorTable(G_raveEngine, tex, G_paletteTable) ;
+        G_raveUITex  = tex ;
+        G_raveUIPotW = potW ; G_raveUIPotH = potH ;
+        G_raveUISW   = sw ;   G_raveUISH   = sh ;
+    }
+}
+
+/* rave-9: fill a rect-relative screen rect with opaque black (untextured gouraud).
+   Used for the letterbox bars -- tall 3D geometry projects above/below the view
+   rect into the letterbox, and the UI quad (game area only) doesn't cover it. */
+static void IRaveDrawSolidRect(float x0, float y0, float x1, float y1)
+{
+    TQAVGouraud v[4] ;
+    int i ;
+    v[0].x = x0 ; v[0].y = y0 ;
+    v[1].x = x0 ; v[1].y = y1 ;
+    v[2].x = x1 ; v[2].y = y1 ;
+    v[3].x = x1 ; v[3].y = y0 ;
+    for (i = 0 ; i < 4 ; i++) {
+        v[i].z = -0.5f ; v[i].invW = 1.0f ;      /* near -> over all 3D */
+        v[i].r = v[i].g = v[i].b = 0.0f ; v[i].a = 1.0f ;   /* opaque black */
+    }
+    QADrawTriGouraud(G_raveContext, &v[0], &v[1], &v[2], kQATriFlags_None) ;
+    QADrawTriGouraud(G_raveContext, &v[0], &v[2], &v[3], kQATriFlags_None) ;
+}
+
+/* Cover the letterbox bars around the game (dst) rect with black. */
+static void IRaveDrawLetterbox(void)
+{
+    int cw = ResScaleGetWindowWidth(), ch = ResScaleGetWindowHeight() ;
+    int x0 = G_raveDstX, y0 = G_raveDstY ;
+    int x1 = G_raveDstX + G_raveDstW, y1 = G_raveDstY + G_raveDstH ;
+    if (cw <= 0) cw = x1 ;
+    if (ch <= 0) ch = y1 ;
+    if (y0 > 0)  IRaveDrawSolidRect(0.0f, 0.0f, (float)cw, (float)y0) ;        /* top    */
+    if (y1 < ch) IRaveDrawSolidRect(0.0f, (float)y1, (float)cw, (float)ch) ;   /* bottom */
+    if (x0 > 0)  IRaveDrawSolidRect(0.0f, 0.0f, (float)x0, (float)ch) ;        /* left   */
+    if (x1 < cw) IRaveDrawSolidRect((float)x1, 0.0f, (float)cw, (float)ch) ;   /* right  */
+}
+
+/* rave-9: draw the UI texture as a screen-space quad over the dst rect. No view
+   transform (it's already in screen space) and z at the near plane so it beats
+   all 3D under the standard LT z-test; alpha-test drops the transparent texels. */
+static void IRaveDrawUIQuad(void)
+{
+    TQAVTexture v[4] ;
+    int   dx = 0, dy = 0, dw = 0, dh = 0, i ;
+    float u1, v1 ;
+
+    if (G_raveUITex == NULL)
+        return ;
+    dx = G_raveDstX ; dy = G_raveDstY ; dw = G_raveDstW ; dh = G_raveDstH ;
+    if ((dw <= 0) || (dh <= 0))
+        return ;
+    u1 = (float)G_raveUISW / (float)G_raveUIPotW ;
+    v1 = (float)G_raveUISH / (float)G_raveUIPotH ;
+
+    QASetPtr(G_raveContext, kQATag_Texture, G_raveUITex) ;
+
+    /* TL, BL, BR, TR (matches IRaveDrawTexturedQuad winding). V is flipped --
+       screen-top samples v=v1 (UI top row), screen-bottom v=0 -- because the UI
+       content is bottom-aligned in the texture and RAVE samples V upward. */
+    v[0].x = (float)dx ;      v[0].y = (float)dy ;      v[0].uOverW = 0.0f ; v[0].vOverW = v1 ;
+    v[1].x = (float)dx ;      v[1].y = (float)(dy+dh) ; v[1].uOverW = 0.0f ; v[1].vOverW = 0.0f ;
+    v[2].x = (float)(dx+dw) ; v[2].y = (float)(dy+dh) ; v[2].uOverW = u1 ;   v[2].vOverW = 0.0f ;
+    v[3].x = (float)(dx+dw) ; v[3].y = (float)dy ;      v[3].uOverW = u1 ;   v[3].vOverW = v1 ;
+    for (i = 0 ; i < 4 ; i++) {
+        v[i].z    = -0.5f ;    /* near -> in front of all 3D (z in [0,1]) */
+        v[i].invW = 1.0f ;     /* screen space: no perspective divide */
+        v[i].r = v[i].g = v[i].b = 0.0f ;
+        v[i].a = 1.0f ;
+        v[i].kd_r = v[i].kd_g = v[i].kd_b = 1.0f ;
+        v[i].ks_r = v[i].ks_g = v[i].ks_b = 0.0f ;
+    }
+    QADrawTriTexture(G_raveContext, &v[0], &v[1], &v[2], kQATriFlags_None) ;
+    QADrawTriTexture(G_raveContext, &v[0], &v[2], &v[3], kQATriFlags_None) ;
+}
+
+/* rave-9: called by RESSCALE at present time (after the 2D UI is drawn into its
+   320x200 frame). The 3D render pass is still open (FrameEnd deferred the swap in
+   direct mode); draw the UI quad over the 3D, then QARenderEnd swaps the whole
+   composited frame to the fullscreen display. No readback, no CPU composite. */
+T_void RaveViewDrawUIAndPresent(const T_byte8 *ui8, int sw, int sh, int pitch)
+{
+    if (!RaveViewIsActive() || !G_raveDirectPresent)
+        return ;
+
+#if RAVE_PROFILE
+    RaveViewProfileCompositeBegin() ;      /* UI build + draw counts as composite */
+#endif
+    IRaveUploadUI(ui8, sw, sh, pitch) ;
+    IRaveDrawUIQuad() ;
+    IRaveDrawLetterbox() ;   /* hide 3D that projected into the letterbox bars */
+
+#if RAVE_PROFILE
+    { unsigned long _t = IProfNowUs() ;
+      QARenderEnd(G_raveContext, NULL) ;   /* swaps unless held for a shot */
+      G_profRenderUs = IProfNowUs() - _t ; }
+#else
+    QARenderEnd(G_raveContext, NULL) ;
+#endif
+
+    if (G_raveShotPending) {                /* frame held (DontSwap set in FrameBegin) */
+        IRaveSaveShot() ;
+        G_raveShotPending = FALSE ;
+    }
+    G_raveFrameReady = FALSE ;
+#if RAVE_PROFILE
+    RaveViewProfileFrame() ;
+#endif
+}
+
 T_void RaveViewFrameEnd(T_void)
 {
     TQAPixelBuffer pb ;
     TQAError       err ;
+#if RAVE_PROFILE
+    unsigned long  _tRender, _tReadback ;
+#endif
 
     if (!RaveViewIsActive())
         return ;
 
+    /* rave-9 direct-to-screen: defer the present. The 3D is rendered but the pass
+       stays OPEN so RaveViewDrawUIAndPresent (called from RESSCALE once the 2D UI
+       is ready) can draw the UI quad into this same frame, then QARenderEnd. */
+    if (G_raveDirectPresent)
+        return ;
+
+#if RAVE_PROFILE
+    _tRender = IProfNowUs() ;
+#endif
     QARenderEnd(G_raveContext, NULL) ;      /* DontSwap: stays in back buffer */
+#if RAVE_PROFILE
+    G_profRenderUs = IProfNowUs() - _tRender ;
+    _tReadback = IProfNowUs() ;
+#endif
 
     /* rave-7: read the rendered back buffer and convert it to canonical RGB555
        in G_raveFrameBuf. ResScaleRaveComposite (RESSCALE.C) then scales that
@@ -817,8 +1231,68 @@ T_void RaveViewFrameEnd(T_void)
     }
 
     QAAccessDrawBufferEnd(G_raveContext, NULL) ;
+#if RAVE_PROFILE
+    G_profReadbackUs = IProfNowUs() - _tReadback ;
+#endif
     G_raveFrameReady = TRUE ;
 }
+
+#if RAVE_PROFILE
+/* RESSCALE.C calls this just before the composite pixel loop; RaveViewProfile
+   Frame() below then measures composite time itself (keeps the Mac timer call
+   out of the cross-platform RESSCALE.C). */
+T_void RaveViewProfileCompositeBegin(void)
+{
+    G_profCompositeStart = IProfNowUs() ;
+}
+
+/* Called once per composited frame from RESSCALE.C (right after the composite
+   pixel loop). Rolls this frame's upload/render/readback (in the globals) plus
+   the composite time into ~1s accumulators, and every ~second MessageAdd()s an
+   averaged per-phase ms line + FPS -- so the on-screen log / F8 screenshot shows
+   which phase dominates. up=<ms>/<uploads>  rn=render  rd=readback  cp=composite. */
+T_void RaveViewProfileFrame(void)
+{
+    unsigned long now, elapsed, compositeUs ;
+
+    if (!G_raveEnabled)
+        return ;
+    compositeUs = IProfNowUs() - G_profCompositeStart ;
+    G_accUpload    += G_profUploadUs ;
+    G_accUploads   += G_profUploads ;
+    G_accRender    += G_profRenderUs ;
+    G_accReadback  += G_profReadbackUs ;
+    G_accComposite += compositeUs ;
+    G_accFrames++ ;
+
+    now = IProfNowUs() ;
+    if (G_profLastReportUs == 0) {          /* first frame: start the window here */
+        G_profLastReportUs = now ;
+        return ;
+    }
+    elapsed = now - G_profLastReportUs ;    /* unsigned, wrap-safe */
+    if ((elapsed >= 1000000UL) && (G_accFrames > 0)) {
+        char          buf[128] ;
+        unsigned long f  = G_accFrames ;
+        unsigned long up = (G_accUpload    / f) / 100UL ;   /* tenths of a ms */
+        unsigned long rn = (G_accRender    / f) / 100UL ;
+        unsigned long rd = (G_accReadback  / f) / 100UL ;
+        unsigned long cp = (G_accComposite / f) / 100UL ;
+        unsigned long nu = G_accUploads    / f ;            /* uploads / frame */
+        unsigned long fp = (f * 10000000UL) / (elapsed ? elapsed : 1UL) ; /* fps*10 */
+        sprintf(buf,
+            "RAVE ms up=%lu.%lu/%lu rn=%lu.%lu rd=%lu.%lu cp=%lu.%lu fps=%lu.%lu",
+            up/10, up%10, nu, rn/10, rn%10, rd/10, rd%10, cp/10, cp%10, fp/10, fp%10) ;
+        MessageAdd((T_byte8 *)buf) ;
+        G_accUpload = G_accRender = G_accReadback = G_accComposite = 0 ;
+        G_accUploads = G_accFrames = 0 ;
+        G_profLastReportUs = now ;
+    }
+}
+#else
+T_void RaveViewProfileCompositeBegin(void) {}
+T_void RaveViewProfileFrame(void) {}
+#endif
 
 /* rave-7: hand the composited RGB555 frame (+ its dimensions) to the display
    compositor. Returns FALSE when no RAVE frame is available (inactive build,
@@ -862,6 +1336,12 @@ E_Boolean RaveViewGetFrame(T_raveFrame *out)
    frame. Never a permanent black screen. */
 E_Boolean RaveViewIsPresenting(T_void)
 {
+    /* rave-9 direct-to-screen has no readback frame to gate on -- RAVE swaps its
+       own buffer, so it "presents" whenever it's active. (The 1-frame software
+       fallback of the readback path doesn't apply; the first RAVE swap shows the
+       3D directly.) */
+    if (G_raveDirectPresent)
+        return RaveViewIsActive() ;
     return (G_raveFrameReady && G_raveEnabled) ? TRUE : FALSE ;
 }
 
@@ -888,8 +1368,10 @@ static T_void IRaveDrawTexturedQuad(
     src[2] = bottomRight ; src[3] = topRight ;
 
     for (i = 0 ; i < 4 ; i++) {
-        v[i].x    = src[i]->x ;
-        v[i].y    = src[i]->y ;
+        /* rave-9: map VIEW3D emit space -> screen (identity in the readback path,
+           where Org=0/Scl=1; the on-screen view rect in direct-to-screen). */
+        v[i].x    = G_raveViewOrgX + src[i]->x * G_raveViewSclX ;
+        v[i].y    = G_raveViewOrgY + src[i]->y * G_raveViewSclY ;
         v[i].z    = src[i]->z ;
         v[i].invW = src[i]->invW ;
         /* RAVE wants u/w, v/w; it divides by interpolated invW per pixel. */
@@ -1054,7 +1536,13 @@ static TQATexture *IRaveUploadFlat(T_byte8 *raw, T_word16 w, T_word16 h)
                 buf[(T_word32)rr * potW + cc] = buf[(T_word32)vpad * potW + cc] ;
     }
     image.width = potW ; image.height = potH ; image.rowBytes = potW * 2 ; image.pixmap = buf ;
+#if RAVE_PROFILE
+    { unsigned long _t = IProfNowUs() ;
+      err = QATextureNew(G_raveEngine, kQATexture_None, kQAPixel_ARGB16, &image, &tex) ;
+      G_profUploadUs += IProfNowUs() - _t ; G_profUploads++ ; }
+#else
     err = QATextureNew(G_raveEngine, kQATexture_None, kQAPixel_ARGB16, &image, &tex) ;
+#endif
     MemFree(buf) ;
     return (err == kQANoErr) ? tex : NULL ;
 }
@@ -1128,6 +1616,22 @@ E_Boolean RaveViewIsActive(T_void)
                ? TRUE : FALSE ;
 }
 
+/* rave-9: TRUE when RAVE owns the fullscreen present (QARenderEnd swaps its own
+   buffer to the display). RESSCALE then skips its scale/composite/SDL_Flip so
+   the two don't fight. FALSE = the readback+composite path (software present). */
+E_Boolean RaveViewIsDirectPresenting(T_void)
+{
+    return (RaveViewIsActive() && G_raveDirectPresent) ? TRUE : FALSE ;
+}
+
+/* rave-9: request an F8 screenshot of the direct-to-screen frame. The next frame
+   is held + read back once in FrameEnd. Used by CLIENT.C when direct-presenting
+   (the SDL SaveBMP path can't see RAVE's own buffer). */
+T_void RaveViewRequestShot(T_void)
+{
+    G_raveShotPending = TRUE ;
+}
+
 /* Per-frame suspend (escape/options menu over the full 3D view). While
    suspended the RAVE path is dormant and the software renderer draws + shows,
    so that UI isn't hidden by the composite. Clears the ready frame so the
@@ -1168,7 +1672,13 @@ T_void    RaveViewFinish(T_void)        {}
 T_void    RaveViewFrameBegin(T_void)    {}
 T_void    RaveViewFrameEnd(T_void)      {}
 T_void    RaveViewFlushTextures(T_void) {}
+T_void    RaveViewProfileCompositeBegin(void) {}
+T_void    RaveViewProfileFrame(void) {}
 E_Boolean RaveViewIsActive(T_void)      { return FALSE ; }
+E_Boolean RaveViewIsDirectPresenting(T_void) { return FALSE ; }
+T_void    RaveViewRequestShot(T_void)   {}
+T_void    RaveViewDrawUIAndPresent(const T_byte8 *ui8, int sw, int sh, int pitch)
+          { (void)ui8 ; (void)sw ; (void)sh ; (void)pitch ; }
 
 E_Boolean RaveViewGetFrame(T_raveFrame *out)
 {
