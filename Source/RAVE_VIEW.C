@@ -1233,6 +1233,14 @@ T_void RaveViewDrawUIAndPresent(const T_byte8 *ui8, int sw, int sh, int pitch)
         G_profRestUs = IProfNowUs() - G_profFrameEndUs ; /* software UI draw + game logic */
     RaveViewProfileCompositeBegin() ;      /* UI build + draw counts as composite */
 #endif
+    /* Composite the UI + letterbox as a pure 2D overlay: ALWAYS on top of the 3D,
+       depth test off, so near geometry (or an unclamped object) that projected past
+       the view rect can never punch through the HUD. The transparent view-rect hole
+       still shows 3D (alpha-test drops those texels). FrameBegin's IRaveSetRenderState
+       restores LT/Enable for the next 3D pass. */
+    QASetInt(G_raveContext, kQATag_ZFunction,   kQAZFunction_True) ;
+    QASetInt(G_raveContext, kQATag_ZBufferMask, kQAZBufferMask_Disable) ;
+
     IRaveUploadUI(ui8, sw, sh, pitch, twoD) ;
     IRaveDrawUIQuad() ;
     IRaveDrawLetterbox() ;   /* hide 3D that projected into the letterbox bars */

@@ -15,6 +15,7 @@
 #include "3D_VIEW.H"
 #include "RAVE_VIEW.H"   /* alt HW renderer; no-ops unless AA_RENDERER_RAVE */
 #include "ESCMENU.H"     /* EscapeMenuIsOpen() -- suspend RAVE while it's up */
+#include "BANNER.H"      /* BannerIsOpen()    -- suspend RAVE for banner forms */
 #include "AREASND.H"
 #include "CLIENT.H"
 #include "COLOR.H"
@@ -191,9 +192,13 @@ INDICATOR_LIGHT(105, INDICATOR_GREEN) ;
     /* (rave-5), bracketed by FrameBegin/FrameEnd. The software raster still   */
     /* runs and is what the player sees until rave-7 presents the RAVE frame   */
     /* and skips it. FrameBegin/End are no-ops off-RAVE / when inactive.       */
-    /* Suspend RAVE while the escape/options menu is up over the full view, so
-       the software renderer draws it on top instead of the composite hiding it. */
-    RaveViewSetSuspended(EscapeMenuIsOpen()) ;
+    /* Suspend RAVE while a full-screen/side UI is up over the view, so the software
+       renderer draws it instead of the RAVE composite hiding it:
+        - the escape/options menu (full view), and
+        - any banner form (inventory/journal/stats/... -- "small screen" mode shrinks
+          the 3D and draws the form on the right; the RAVE view-transform + UI key
+          don't track that shrink, so the form was rendering transparent). */
+    RaveViewSetSuspended(EscapeMenuIsOpen() || BannerIsOpen()) ;
     RaveViewFrameBegin() ;
     View3dDrawView() ;
     RaveViewFrameEnd() ;
