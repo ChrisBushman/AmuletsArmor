@@ -1174,7 +1174,7 @@ static void IRaveDrawSolidRect(float x0, float y0, float x1, float y1)
     v[2].x = x1 ; v[2].y = y1 ;
     v[3].x = x1 ; v[3].y = y0 ;
     for (i = 0 ; i < 4 ; i++) {
-        v[i].z = -0.5f ; v[i].invW = 1.0f ;      /* near -> over all 3D */
+        v[i].z = 0.0f ; v[i].invW = 1.0f ;       /* z=0 (below RAVE_ZGEOMMIN) -> over all 3D */
         v[i].r = v[i].g = v[i].b = 0.0f ; v[i].a = 1.0f ;   /* opaque black */
     }
     QADrawTriGouraud(G_raveContext, &v[0], &v[1], &v[2], kQATriFlags_None) ;
@@ -1222,7 +1222,9 @@ static void IRaveDrawUIQuad(void)
     v[2].x = (float)(dx+dw) ; v[2].y = (float)(dy+dh) ; v[2].uOverW = u1 ;   v[2].vOverW = 0.0f ;
     v[3].x = (float)(dx+dw) ; v[3].y = (float)dy ;      v[3].uOverW = u1 ;   v[3].vOverW = v1 ;
     for (i = 0 ; i < 4 ; i++) {
-        v[i].z    = -0.5f ;    /* near -> in front of all 3D (z in [0,1]) */
+        v[i].z    = 0.0f ;     /* z=0: below RAVE_ZGEOMMIN so the HUD wins the depth
+                                  test over ALL 3D (RAVE clamps z to [0,1]; a negative
+                                  z would collapse to 0 and TIE hugged walls). */
         v[i].invW = 1.0f ;     /* screen space: no perspective divide */
         v[i].r = v[i].g = v[i].b = 0.0f ;
         v[i].a = 1.0f ;

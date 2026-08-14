@@ -2865,10 +2865,17 @@ static float IRaveInvW(float depth)
    166 vs 200 now differ by ~0.01 instead of ~0.001). Max depth (9999 clamp) -> z
    0.999, still under the sky's 0.9999 so the sky stays behind everything. */
 #define RAVE_ZNEAR 10.0f   /* = ZMIN world units */
+/* Floor the world z a hair ABOVE 0 so the 2D overlay (UI quad + letterbox, drawn at
+   z=0) always wins the depth test against the nearest geometry. RAVE clamps vertex z
+   to [0,1], so an overlay at a negative z collapses to 0 and TIES a hugged wall
+   (depth~ZMIN -> z=0); with ZFunction_LT the tie let the wall draw over the HUD and
+   the letterbox bars. Reserving [0, RAVE_ZGEOMMIN) for the overlay fixes that. The
+   lost near sliver is empty (nothing is closer than ZMIN). */
+#define RAVE_ZGEOMMIN (1.0f/32.0f)
 static float IRaveZ(float invW)
 {
     float z = 1.0f - invW * RAVE_ZNEAR ;
-    if (z < 0.0f) z = 0.0f ;
+    if (z < RAVE_ZGEOMMIN) z = RAVE_ZGEOMMIN ;
     if (z > 1.0f) z = 1.0f ;
     return z ;
 }
