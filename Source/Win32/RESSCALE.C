@@ -236,6 +236,13 @@ static void IWriteDefaultIni(void)
         ";             tearing, caps FPS to the refresh rate).  macOS/Linux\n"
         ";             (sdl12-compat) only; ignored on the real-SDL-1.2 builds\n"
         ";             (Windows/PPC/O2).  0 = off (default).\n"
+        "; renderer    Which 3D renderer draws the world view:\n"
+        ";             software = the CPU renderer (all platforms).\n"
+        ";             rave     = the QuickDraw 3D RAVE hardware backend\n"
+        ";                        (Mac OS RAVE builds only; ignored elsewhere).\n"
+        ";             Only the 3D view changes; all menus/HUD are unaffected.\n"
+        ";             In game, F12 toggles it live.  If RAVE can't start, the\n"
+        ";             software renderer is used automatically.\n"
         "\n"
         "scale=2\n"
         "fit=fit\n"
@@ -246,7 +253,8 @@ static void IWriteDefaultIni(void)
         "hotkeys=1\n"
         "bpp=0\n"
         "detail=2\n"
-        "vsync=0\n",
+        "vsync=0\n"
+        "renderer=software\n",
         fp);
     fclose(fp);
 }
@@ -324,7 +332,7 @@ static void IReadIni(void)
         else if (ICompareKey(key, "renderer") == 0)  {
             /* rave-7: 3D renderer choice. "software" forces the CPU renderer;
                "rave"/"hardware" selects the RAVE HW backend. No-op on non-RAVE
-               builds. Unset -> build default (RAVE on where compiled in). The
+               builds. Unset -> software (RAVE is opt-in; see G_raveEnabled). The
                in-game F12 hotkey toggles it live regardless. */
             if (ICompareKey(value, "software") == 0)
                 RaveViewSetEnabled(FALSE);

@@ -64,8 +64,9 @@ static E_Boolean G_raveFrameReady = FALSE ; /* a frame is in G_raveFrameBuf   */
 /* Runtime software<->RAVE switch (hotkey + resolution.ini). When FALSE the
    whole RAVE path goes dormant -- IsActive/IsPresenting/GetFrame report off,
    FrameBegin/End/Emit no-op -- so the software renderer draws and is shown,
-   with no rebuild. Default ON for the RAVE build; the ini can force it off. */
-static E_Boolean G_raveEnabled    = TRUE ;
+   with no rebuild. Default OFF: RAVE is opt-in via resolution.ini
+   (renderer=rave) or the in-game F12 hotkey; software is the shipping default. */
+static E_Boolean G_raveEnabled    = FALSE ;
 
 /* Per-frame suspend: the game sets this (e.g. while the escape/options menu is
    open over the full 3D view) so RAVE goes dormant and the software renderer
