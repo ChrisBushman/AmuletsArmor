@@ -1065,7 +1065,14 @@ static void IRaveUploadUI(const T_byte8 *ui8, int sw, int sh, int pitch,
     T_byte8        *buf ;
     int             potW, potH, vpad, x, y ;
     int             vx0 = 4, vy0 = 3 ;                /* VIEW3D_ORIGIN_X/Y */
-    int             vx1 = 4 + (int)VIEW3D_WIDTH ;
+    /* The transparent 3D hole tracks the VISIBLE view width, which shrinks when a
+       banner form (inventory/journal/stats/...) opens: View3dClipCenter narrows
+       [CLIP_LEFT,CLIP_RIGHT] and the view is LEFT-ALIGNED at the origin, so the
+       window is [ORIGIN_X, ORIGIN_X + (CLIP_RIGHT-CLIP_LEFT)]. Using the full
+       VIEW3D_WIDTH here kept the hole full-width, so the form drawn on the right
+       was inside it and got keyed transparent (invisible in RAVE). No form open ->
+       CLIP span == VIEW3D_WIDTH, so this is identical to before. */
+    int             vx1 = 4 + (int)(VIEW3D_CLIP_RIGHT - VIEW3D_CLIP_LEFT) ;
     int             vy1 = 3 + (int)VIEW3D_HEIGHT ;
     TQAImage        image ;
     TQAError        err ;

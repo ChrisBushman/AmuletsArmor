@@ -192,13 +192,13 @@ INDICATOR_LIGHT(105, INDICATOR_GREEN) ;
     /* (rave-5), bracketed by FrameBegin/FrameEnd. The software raster still   */
     /* runs and is what the player sees until rave-7 presents the RAVE frame   */
     /* and skips it. FrameBegin/End are no-ops off-RAVE / when inactive.       */
-    /* Suspend RAVE while a full-screen/side UI is up over the view, so the software
-       renderer draws it instead of the RAVE composite hiding it:
-        - the escape/options menu (full view), and
-        - any banner form (inventory/journal/stats/... -- "small screen" mode shrinks
-          the 3D and draws the form on the right; the RAVE view-transform + UI key
-          don't track that shrink, so the form was rendering transparent). */
-    RaveViewSetSuspended(EscapeMenuIsOpen() || BannerIsOpen()) ;
+    /* Suspend RAVE only while the escape/options menu is up: it's a partial overlay
+       drawn OVER the full 3D view (into the main frame, not the overlay mask), so the
+       RAVE composite would key it transparent. Banner forms (inventory/journal/...)
+       are NOT suspended -- they shrink the view via View3dClipCenter and draw beside
+       it, and the RAVE UI hole now tracks that shrink (RAVE_VIEW.C), so they composite
+       correctly with the live game behind them. */
+    RaveViewSetSuspended(EscapeMenuIsOpen()) ;
     RaveViewFrameBegin() ;
     View3dDrawView() ;
     RaveViewFrameEnd() ;
