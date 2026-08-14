@@ -61,6 +61,19 @@ static unsigned long G_accUploads = 0, G_accFrames = 0 ;
 static unsigned long G_profLastReportUs = 0 ;
 static unsigned long G_profCompositeStart = 0 ;   /* set by CompositeBegin */
 
+/* rave-9 perf pass: the geometry/emit phase (FrameBegin->FrameEnd = BSP walk +
+   RAVE emit) and the "rest" (FrameEnd->present = software UI draw + game logic),
+   plus cheap per-frame WORK counters (emit quads, shade strips, textured-tri draw
+   calls, and total texture-cache scan iterations) -- to find where the unmeasured
+   ~180ms frame goes and whether the O(n) cache scan / strip-split is the cost. */
+static unsigned long G_profGeoUs = 0, G_profRestUs = 0 ;
+static unsigned long G_profFrameBeginUs = 0, G_profFrameEndUs = 0 ;
+static T_word32      G_profQuads = 0, G_profStrips = 0, G_profDraws = 0 ;
+static T_word32      G_profCacheScans = 0 ;
+static unsigned long G_accGeo = 0, G_accRest = 0 ;
+static T_word32      G_accQuads = 0, G_accStrips = 0, G_accDraws = 0 ;
+static unsigned long G_accCacheScans = 0 ;
+
 static unsigned long IProfNowUs(void)
 {
     UnsignedWide t ;
@@ -622,6 +635,9 @@ static T_word16 IRaveCacheFind(T_byte8 *key, T_sword16 level)
 {
     T_word16 i ;
     for (i = 0 ; i < G_raveTexCount ; i++) {
+#if RAVE_PROFILE
+        G_profCacheScans++ ;   /* count scan iterations -- the O(n) probe cost */
+#endif
         if ((G_raveTexCache[i].key == key) && (G_raveTexCache[i].level == level)) {
             G_raveTexCache[i].lastUsed = G_raveFrameNum ;
             return i ;
@@ -731,6 +747,13 @@ T_void RaveViewFlushTextures(T_void)
     G_raveTexCount = 0 ;
     G_raveTexMax   = 0 ;
 
+    /* The persistent UI texture is bound to the palette table below -- drop it too
+       so it (and its binding) rebuild lazily on the next frame. */
+    if ((G_raveUITex != NULL) && (G_raveEngine != NULL))
+        QATextureDelete(G_raveEngine, G_raveUITex) ;
+    G_raveUITex = NULL ;
+    G_raveUIPotW = G_raveUIPotH = 0 ;
+
     /* Drop the shared palette color table too -- it was built from this level's
        palette and rebuilds lazily on the next bake. */
     IFreePaletteTable() ;
@@ -769,10 +792,11 @@ static T_void IRaveSetRenderState(TQADrawContext *ctx)
        per-vertex w/invW that rave-5 supplies, independent of this. */
     QASetInt(ctx, kQATag_PerspectiveZ, kQAPerspectiveZ_Off) ;
 
-    /* Best filtering -- the probe confirmed the Rage LT Pro HW-accelerates
-       TextureHQ. (Switch to kQATextureFilter_Fast for the crisp, unfiltered
-       classic-pixel look if that reads better on hardware.) */
-    QASetInt(ctx, kQATag_TextureFilter, kQATextureFilter_Best) ;
+    /* Fast (point) filtering: the profiler showed the frame is FILL-bound (forest
+       overdraw = ~145ms GEO), and bilinear (_Best) samples ~4x the texels per
+       pixel. _Fast is ~4x cheaper AND gives the crisp classic-pixel look. Perf
+       pass, rave-9. (Was _Best.) */
+    QASetInt(ctx, kQATag_TextureFilter, kQATextureFilter_Fast) ;
 
     /* Modulate the texture by the per-vertex diffuse color so rave-5's gouraud
        sector lighting darkens/brightens the texels.
@@ -887,6 +911,9 @@ T_void RaveViewFrameBegin(T_void)
 
 #if RAVE_PROFILE
     G_profUploadUs = 0 ; G_profUploads = 0 ;   /* uploads accumulate over this frame's emit */
+    G_profFrameBeginUs = IProfNowUs() ;        /* start of BSP walk + emit */
+    G_profQuads = G_profStrips = G_profDraws = 0 ;
+    G_profCacheScans = 0 ;
 #endif
 
     /* rave-4: background must be set before QARenderStart, which (NULL initial
@@ -951,7 +978,11 @@ static void IRaveSaveShot(void)
    the walls. Index 0 (transparent) ONLY inside the view rect where the overlay is
    0 (pure 3D background); everywhere else the raw UI index, safe-black-substituted
    for a genuine index-0 UI pixel so the HUD's black stays opaque. Rebuilt each
-   frame (UI animates); prior texture freed. */
+   frame (UI animates); prior texture freed.
+
+   NOTE: an in-place QAAccessTexture reuse was tried to avoid the per-frame
+   QATextureNew/Delete, but the engine hands back raw VRAM in a swizzled layout, so
+   linear writes garble the UI. QATextureNew (which does the swizzle) it is. */
 static void IRaveUploadUI(const T_byte8 *ui8, int sw, int sh, int pitch)
 {
     const T_byte8  *ovl ;
@@ -1095,6 +1126,7 @@ T_void RaveViewDrawUIAndPresent(const T_byte8 *ui8, int sw, int sh, int pitch)
         return ;
 
 #if RAVE_PROFILE
+    G_profRestUs = IProfNowUs() - G_profFrameEndUs ;   /* software UI draw + game logic */
     RaveViewProfileCompositeBegin() ;      /* UI build + draw counts as composite */
 #endif
     IRaveUploadUI(ui8, sw, sh, pitch) ;
@@ -1129,6 +1161,11 @@ T_void RaveViewFrameEnd(T_void)
 
     if (!RaveViewIsActive())
         return ;
+
+#if RAVE_PROFILE
+    G_profGeoUs      = IProfNowUs() - G_profFrameBeginUs ;   /* BSP walk + emit */
+    G_profFrameEndUs = IProfNowUs() ;
+#endif
 
     /* rave-9 direct-to-screen: defer the present. The 3D is rendered but the pass
        stays OPEN so RaveViewDrawUIAndPresent (called from RESSCALE once the 2D UI
@@ -1263,6 +1300,12 @@ T_void RaveViewProfileFrame(void)
     G_accRender    += G_profRenderUs ;
     G_accReadback  += G_profReadbackUs ;
     G_accComposite += compositeUs ;
+    G_accGeo       += G_profGeoUs ;
+    G_accRest      += G_profRestUs ;
+    G_accQuads     += G_profQuads ;
+    G_accStrips    += G_profStrips ;
+    G_accDraws     += G_profDraws ;
+    G_accCacheScans+= G_profCacheScans ;
     G_accFrames++ ;
 
     now = IProfNowUs() ;
@@ -1280,12 +1323,26 @@ T_void RaveViewProfileFrame(void)
         unsigned long cp = (G_accComposite / f) / 100UL ;
         unsigned long nu = G_accUploads    / f ;            /* uploads / frame */
         unsigned long fp = (f * 10000000UL) / (elapsed ? elapsed : 1UL) ; /* fps*10 */
-        sprintf(buf,
-            "RAVE ms up=%lu.%lu/%lu rn=%lu.%lu rd=%lu.%lu cp=%lu.%lu fps=%lu.%lu",
-            up/10, up%10, nu, rn/10, rn%10, rd/10, rd%10, cp/10, cp%10, fp/10, fp%10) ;
-        MessageAdd((T_byte8 *)buf) ;
+        {   /* line 2: geometry/emit + rest phases, and emit WORK per frame */
+            unsigned long ge = (G_accGeo  / f) / 100UL ;   /* tenths of a ms */
+            unsigned long re = (G_accRest / f) / 100UL ;
+            char buf2[128] ;
+            sprintf(buf,
+                "RAVE ms up=%lu.%lu/%lu rn=%lu.%lu rd=%lu.%lu cp=%lu.%lu fps=%lu.%lu",
+                up/10, up%10, nu, rn/10, rn%10, rd/10, rd%10, cp/10, cp%10, fp/10, fp%10) ;
+            MessageAdd((T_byte8 *)buf) ;
+            sprintf(buf2,
+                "RAVE geo=%lu.%lu rest=%lu.%lu q=%lu dr=%lu st=%lu cs=%luk",
+                ge/10, ge%10, re/10, re%10,
+                (unsigned long)(G_accQuads / f), (unsigned long)(G_accDraws / f),
+                (unsigned long)(G_accStrips / f),
+                (unsigned long)((G_accCacheScans / f) / 1000UL)) ;
+            MessageAdd((T_byte8 *)buf2) ;
+        }
         G_accUpload = G_accRender = G_accReadback = G_accComposite = 0 ;
         G_accUploads = G_accFrames = 0 ;
+        G_accGeo = G_accRest = 0 ;
+        G_accQuads = G_accStrips = G_accDraws = 0 ; G_accCacheScans = 0 ;
         G_profLastReportUs = now ;
     }
 }
@@ -1362,6 +1419,9 @@ static T_void IRaveDrawTexturedQuad(
     float               invNH = 1.0f / normH ;
     int                 i ;
 
+#if RAVE_PROFILE
+    G_profDraws++ ;   /* one textured quad (2 tris) -- wall strip, sprite, or sky */
+#endif
     QASetPtr(G_raveContext, kQATag_Texture, tex) ;
 
     src[0] = topLeft ; src[1] = bottomLeft ;
@@ -1445,6 +1505,9 @@ T_void RaveViewEmitQuad(
     if ((p_texture == NULL) || (p_texture == G_textureNone + 4))
         return ;                        /* untextured -> skip */
 
+#if RAVE_PROFILE
+    G_profQuads++ ;   /* one wall/floor emit (may split into strips below) */
+#endif
     /* Normalize u,v by the POT upload size (not logical) -- see IRaveUploadTexture. */
     normW = (float)INextPow2(PictureGetWidth(p_texture)) ;
     normH = (float)INextPow2(PictureGetHeight(p_texture)) ;
@@ -1459,6 +1522,9 @@ T_void RaveViewEmitQuad(
     n = (RAVE_SHADE_Q(levelL) - RAVE_SHADE_Q(levelR)) >> 2 ;
     if (n < 0) n = -n ; n += 1 ;
     if (n <= 1) {                                        /* uniform -> one quad */
+#if RAVE_PROFILE
+        G_profStrips++ ;
+#endif
         tex = IRaveGetTexture(p_texture, (T_sword16)(levelL | mkey)) ;
         if (tex != NULL)
             IRaveDrawTexturedQuad(tex, normW, normH, alpha,
@@ -1467,6 +1533,9 @@ T_void RaveViewEmitQuad(
     }
     if (n > RAVE_MAX_STRIPS)
         n = RAVE_MAX_STRIPS ;
+#if RAVE_PROFILE
+    G_profStrips += (T_word32)n ;
+#endif
     for (i = 0 ; i < n ; i++) {
         float        t0 = (float)i / (float)n ;
         float        t1 = (float)(i + 1) / (float)n ;

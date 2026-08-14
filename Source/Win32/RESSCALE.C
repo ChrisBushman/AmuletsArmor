@@ -49,6 +49,9 @@
    RAVE renderer is active. RaveViewGetFrame is a no-op stub returning FALSE on
    every non-RAVE build, so ResScaleRaveComposite below is inert there. */
 #include "RAVE_VIEW.H"
+#if defined(macintosh) && defined(AA_RENDERER_RAVE)
+#include "MESSAGE.H"    /* MessageAdd() -- software-mode fps readout for A/B */
+#endif
 
 #ifndef SDL_NOEVENT
 #define SDL_NOEVENT 0
@@ -981,6 +984,30 @@ void ResScaleUpdate(void)
 
     if (G_real == NULL)
         return;
+
+#if defined(macintosh) && defined(AA_RENDERER_RAVE)
+    /* rave-9 perf A/B: print an fps line in SOFTWARE mode too (the RAVE profiler
+       only reports in RAVE mode), so F12 gives a direct software-vs-RAVE compare.
+       Measured from SDL_GetTicks between presents; reported once a second. */
+    {
+        static Uint32 s_lastMs = 0, s_accMs = 0;
+        static int    s_frames = 0;
+        Uint32        now = SDL_GetTicks();
+        if (s_lastMs != 0) s_accMs += (now - s_lastMs);
+        s_lastMs = now;
+        s_frames++;
+        if (s_accMs >= 1000)  {
+            if ((!RaveViewIsDirectPresenting()) && (s_frames > 0))  {
+                char b[48];
+                unsigned long fps10 = ((unsigned long)s_frames * 10000UL) /
+                                      (s_accMs ? s_accMs : 1UL);
+                sprintf(b, "SW fps=%lu.%lu", fps10 / 10, fps10 % 10);
+                MessageAdd((T_byte8 *)b);
+            }
+            s_accMs = 0; s_frames = 0;
+        }
+    }
+#endif
 
     /* rave-9 direct-to-screen: instead of the SDL scale/composite/flip, RAVE
        draws the game's 2D UI frame as a GPU quad over the 3D (whose render pass
