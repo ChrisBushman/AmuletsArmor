@@ -1077,23 +1077,6 @@ static void IRaveUploadUI(const T_byte8 *ui8, int sw, int sh, int pitch,
        the 3D view on hardware, so it's reverted to the full-view hole here and
        the escape menu + banner forms fall back to software (VIEW.C suspend). */
 
-    /* DIAGNOSTIC (ALT+F8): dump the present-time view-geometry values that decide
-       the transparency hole, so we can see WHY shrinking it blacked the 3D. Read
-       these off the Lombard: vw=VIEW3D_WIDTH vs=VIEW3D_SCALE cl/cr=VIEW3D_CLIP_*
-       hen=HighResViewWindowEnabled hx/hw=HighResViewWindow X/W ban=BannerIsOpen.
-       Prints ~twice/sec while profiling is on. Remove once the banner path lands. */
-    if (G_raveProfileOn && ((G_raveFrameNum & 31) == 0)) {
-        char dbg[96] ;
-        extern E_Boolean BannerIsOpen(T_void) ;
-        sprintf(dbg, "vw=%d vs=%d cl=%d cr=%d hen=%d hx=%d hw=%d ban=%d",
-                (int)VIEW3D_WIDTH, (int)VIEW3D_SCALE,
-                (int)VIEW3D_CLIP_LEFT, (int)VIEW3D_CLIP_RIGHT,
-                (int)HighResViewWindowEnabled(),
-                (int)HighResViewWindowX(), (int)HighResViewWindowW(),
-                (int)BannerIsOpen()) ;
-        MessageAdd((T_byte8 *)dbg) ;
-    }
-
     if (G_raveUITex != NULL) {
         QATextureDelete(G_raveEngine, G_raveUITex) ;
         G_raveUITex = NULL ;
@@ -1256,14 +1239,14 @@ T_void RaveViewDrawUIAndPresent(const T_byte8 *ui8, int sw, int sh, int pitch)
         G_profRestUs = IProfNowUs() - G_profFrameEndUs ; /* software UI draw + game logic */
     RaveViewProfileCompositeBegin() ;      /* UI build + draw counts as composite */
 #endif
-    /* Composite the UI + letterbox as a pure 2D overlay: ALWAYS on top of the 3D,
-       depth test off, so near geometry (or an unclamped object) that projected past
-       the view rect can never punch through the HUD. The transparent view-rect hole
-       still shows 3D (alpha-test drops those texels). FrameBegin's IRaveSetRenderState
-       restores LT/Enable for the next 3D pass. */
-    QASetInt(G_raveContext, kQATag_ZFunction,   kQAZFunction_True) ;
-    QASetInt(G_raveContext, kQATag_ZBufferMask, kQAZBufferMask_Disable) ;
-
+    /* DO NOT change kQATag_ZFunction / kQATag_ZBufferMask here. RAVE is a DEFERRED
+       renderer: the UI quad shares this frame's render pass with the 3D, and state
+       set before QARenderEnd is applied to the WHOLE pass at flush -- so forcing
+       ZFunction_True/ZBufferMask_Disable for "UI on top" also stripped the 3D's
+       depth test, painter's-ordering the walls into black (translucent windows,
+       drawn differently, still showed -- the tell). The UI quad instead relies on
+       plain ZFunction_LT with its z=-0.5, which already beats all geometry (IRaveZ
+       clamps world z to [0,1]); see IRaveDrawUIQuad. */
     IRaveUploadUI(ui8, sw, sh, pitch, twoD) ;
     IRaveDrawUIQuad() ;
     IRaveDrawLetterbox() ;   /* hide 3D that projected into the letterbox bars */

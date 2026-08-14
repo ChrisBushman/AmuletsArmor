@@ -192,12 +192,11 @@ INDICATOR_LIGHT(105, INDICATOR_GREEN) ;
     /* (rave-5), bracketed by FrameBegin/FrameEnd. The software raster still   */
     /* runs and is what the player sees until rave-7 presents the RAVE frame   */
     /* and skips it. FrameBegin/End are no-ops off-RAVE / when inactive.       */
-    /* DIAGNOSTIC build: suspend RAVE for the escape menu only, NOT banner forms, so
-       RAVE stays active while a banner form is open and IRaveUploadUI's ALT+F8
-       diagnostic can print the form-open view-geometry values. The hole stays full
-       (VIEW3D_WIDTH) so the 3D never blacks; the open form is just invisible for now.
-       Restore `|| BannerIsOpen()` once the banner path is understood + fixed. */
-    RaveViewSetSuspended(EscapeMenuIsOpen()) ;
+    /* Suspend RAVE while the escape menu OR a banner form is up, so the software
+       renderer draws that UI. (Banner-form-in-RAVE compositing is still pending; the
+       keying itself is fine -- the earlier "black view" was a deferred-render z bug,
+       now fixed -- but that's the next task.) */
+    RaveViewSetSuspended(EscapeMenuIsOpen() || BannerIsOpen()) ;
     RaveViewFrameBegin() ;
     View3dDrawView() ;
     RaveViewFrameEnd() ;
