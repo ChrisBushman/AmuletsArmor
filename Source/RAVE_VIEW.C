@@ -1674,6 +1674,27 @@ T_void RaveViewEmitQuad(
     if ((p_texture == NULL) || (p_texture == G_textureNone + 4))
         return ;                        /* untextured -> skip */
 
+    /* DIAGNOSTIC (ALT+F8): draw every wall as a flat bright-green quad -- same
+       corners, no texture, no shade strips. Isolates the missing-grazing-wall bug:
+       if the side walls show GREEN, the geometry/emit is fine and the cause is the
+       texture/strip/cache path; if they stay SKY, the hardware is dropping the
+       extreme-coordinate triangle. Remove once the cause is known. */
+    if (G_raveProfileOn) {
+        TQAVGouraud        gv[4] ;
+        const T_raveVertex *sc[4] ;
+        int                 k ;
+        sc[0] = topLeft ; sc[1] = bottomLeft ; sc[2] = bottomRight ; sc[3] = topRight ;
+        for (k = 0 ; k < 4 ; k++) {
+            gv[k].x    = G_raveViewOrgX + sc[k]->x * G_raveViewSclX ;
+            gv[k].y    = G_raveViewOrgY + sc[k]->y * G_raveViewSclY ;
+            gv[k].z    = sc[k]->z ; gv[k].invW = sc[k]->invW ;
+            gv[k].r = 0.0f ; gv[k].g = 1.0f ; gv[k].b = 0.0f ; gv[k].a = 1.0f ;
+        }
+        QADrawTriGouraud(G_raveContext, &gv[0], &gv[1], &gv[2], kQATriFlags_None) ;
+        QADrawTriGouraud(G_raveContext, &gv[0], &gv[2], &gv[3], kQATriFlags_None) ;
+        return ;
+    }
+
 #if RAVE_PROFILE
     G_profQuads++ ;   /* one wall/floor emit (may split into strips below) */
 #endif
