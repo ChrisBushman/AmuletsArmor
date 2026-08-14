@@ -248,6 +248,17 @@ static T_byte8 G_raveSafeBlack = 1 ;
 extern T_byte8 P_shadeIndex[16384] ;   /* 64 x 256 shade->index remap (3D_VIEW.C) */
 static TQAColorTable *G_paletteTable = NULL ;
 
+/* Separate color table for the 2D UI quad, rebuilt from the LIVE palette whenever
+   it changes. G_paletteTable is baked once from the world palette (deferred-safe
+   for the shared world textures) and never tracks AA's per-screen palette loads or
+   per-frame palette animation -- so binding it to the UI froze reds to black (the
+   char-select cursor, quest loading bar, flashing-red HUD panels) until an
+   unrelated reload happened to rebuild it. The UI is a single texture re-uploaded
+   every frame, so it can safely own a live table without the world-cache rebind
+   hazard. G_raveUIPalHash skips the GPU table rebuild on unchanged palettes. */
+static TQAColorTable *G_raveUITable   = NULL ;
+static unsigned long  G_raveUIPalHash = 0 ;
+
 /*-------------------------------------------------------------------------*
  * IPickHardwareEngine -- enumerate the RAVE engines on a device and return
  * the best one: the first that HW-accelerates textured triangles
@@ -438,6 +449,53 @@ static void IFreePaletteTable(void)
     if ((G_paletteTable != NULL) && (G_raveEngine != NULL))
         QAColorTableDelete(G_raveEngine, G_paletteTable) ;
     G_paletteTable = NULL ;
+    if ((G_raveUITable != NULL) && (G_raveEngine != NULL))
+        QAColorTableDelete(G_raveEngine, G_raveUITable) ;
+    G_raveUITable   = NULL ;
+    G_raveUIPalHash = 0 ;
+}
+
+/* Refresh G_raveUITable (and G_raveSafeBlack) from the CURRENT live palette so the
+   2D UI shows the right colors -- reds included -- and tracks per-screen palette
+   loads + palette animation, matching what the software renderer draws. Cheap:
+   hashes the palette and only rebuilds the GPU table when it actually changed; the
+   safe-black index is recomputed every call (the UI pixel loop needs it before the
+   texture upload). Called from IRaveUploadUI each frame. */
+static void IRaveRefreshUITable(void)
+{
+    T_palette     pal ;
+    unsigned long entry[256], h ;
+    int           i, darkest = 0x7FFFFFFF ;
+
+    if (G_raveEngine == NULL)
+        return ;
+    GrGetPalette(0, 256, pal) ;
+
+    h = 2166136261UL ;                       /* FNV-1a over the 768 palette bytes */
+    G_raveSafeBlack = 1 ;
+    for (i = 0 ; i < 256 ; i++) {
+        unsigned long r = (unsigned long)((pal[i][0] & 0x3F) << 2) ;
+        unsigned long g = (unsigned long)((pal[i][1] & 0x3F) << 2) ;
+        unsigned long b = (unsigned long)((pal[i][2] & 0x3F) << 2) ;
+        entry[i] = (r << 16) | (g << 8) | b ;
+        h = (h ^ pal[i][0]) * 16777619UL ;
+        h = (h ^ pal[i][1]) * 16777619UL ;
+        h = (h ^ pal[i][2]) * 16777619UL ;
+        if (i != 0) {
+            int lum = (int)(r + g + b) ;
+            if (lum < darkest) { darkest = lum ; G_raveSafeBlack = (T_byte8)i ; }
+        }
+    }
+
+    if ((G_raveUITable != NULL) && (h == G_raveUIPalHash))
+        return ;                             /* palette unchanged -> keep the table */
+
+    if (G_raveUITable != NULL) {
+        QAColorTableDelete(G_raveEngine, G_raveUITable) ;
+        G_raveUITable = NULL ;
+    }
+    QAColorTableNew(G_raveEngine, kQAColorTable_CL8_RGB32, entry, 1L, &G_raveUITable) ;
+    G_raveUIPalHash = h ;
 }
 
 static T_word16 INextPow2(T_word16 v) ;   /* defined below; used to POT-pad */
@@ -1030,6 +1088,11 @@ static void IRaveUploadUI(const T_byte8 *ui8, int sw, int sh, int pitch,
 
     ovl = (const T_byte8 *)View3dGetOverlayScreen() ;   /* 320x200, 0 = 3D bg */
 
+    /* Refresh the UI color table + safe-black from the LIVE palette first, so the
+       pixel loop's index-0->safe-black mapping and the bound table both reflect the
+       current screen's palette (reds, cursor, loading bar, palette animation). */
+    IRaveRefreshUITable() ;
+
     /* RAVE samples texture V upward (v=0 = bottom row), so the UI must sit flush
        with the BOTTOM of the POT texture -- like sprites/flats. The quad then
        maps screen-top->v=sh, screen-bottom->v=0 (see IRaveDrawUIQuad). */
@@ -1057,9 +1120,12 @@ static void IRaveUploadUI(const T_byte8 *ui8, int sw, int sh, int pitch,
     err = QATextureNew(G_raveEngine, kQATexture_None, kQAPixel_CL8, &image, &tex) ;
     MemFree(buf) ;
     if (err == kQANoErr) {
-        if (G_paletteTable == NULL) IPaletteTable() ;
-        if (G_paletteTable != NULL)
-            QATextureBindColorTable(G_raveEngine, tex, G_paletteTable) ;
+        /* Bind the LIVE UI table (built above) so 2D reds track the current palette;
+           fall back to the baked world table only if the UI table failed to build. */
+        TQAColorTable *uiTab = (G_raveUITable != NULL) ? G_raveUITable : G_paletteTable ;
+        if (uiTab == NULL) uiTab = IPaletteTable() ;
+        if (uiTab != NULL)
+            QATextureBindColorTable(G_raveEngine, tex, uiTab) ;
         G_raveUITex  = tex ;
         G_raveUIPotW = potW ; G_raveUIPotH = potH ;
         G_raveUISW   = sw ;   G_raveUISH   = sh ;
