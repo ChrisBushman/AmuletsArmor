@@ -110,11 +110,11 @@ static E_Boolean G_raveFrameReady = FALSE ; /* a frame is in G_raveFrameBuf   */
 /* Runtime software<->RAVE switch (resolution.ini renderer=). When FALSE the whole
    RAVE path goes dormant -- IsActive/IsPresenting/GetFrame report off,
    FrameBegin/End/Emit no-op -- so the software renderer draws and is shown, with
-   no rebuild. Default ON now that RAVE outperforms the software renderer on
-   hardware; it falls back to software automatically if the RAVE context can't be
-   created (no HW). Force it off with renderer=software. (There is no in-game
-   toggle anymore -- ALT+F12 is the screenshot.) */
-static E_Boolean G_raveEnabled    = TRUE ;
+   no rebuild. Default OFF for now: RAVE outperforms software in the 3D view, but
+   the in-game 2D screens (townUI/shops/guild) still freeze in direct-present
+   mode (WIP), so software stays the safe boot default. Opt in with
+   renderer=rave. There is no in-game toggle anymore -- ALT+F12 is the shot. */
+static E_Boolean G_raveEnabled    = FALSE ;
 
 /* Per-frame suspend: the game sets this (e.g. while the escape/options menu is
    open over the full 3D view) so RAVE goes dormant and the software renderer
@@ -148,6 +148,15 @@ static float G_raveViewSclX = 1.0f, G_raveViewSclY = 1.0f ;
    DEVICE coords -- used by both the 3D transform and the UI quad so they align. */
 static int G_raveScrOffX = 0, G_raveScrOffY = 0 ;
 static int G_raveDstX = 0, G_raveDstY = 0, G_raveDstW = 0, G_raveDstH = 0 ;
+
+/* rave-9: TRUE while a 3D render pass is open this frame (set by RaveViewFrameBegin,
+   cleared once presented). When FALSE at present time we're on a 2D-only screen
+   (main-menu-in-game, townUI, shops, guild, bank, full-screen menus): the BSP walk
+   never ran, so no pass exists. RaveViewDrawUIAndPresent then opens its own pass and
+   presents the whole 2D frame OPAQUE (no 3D-view transparency hole) -- without this
+   the direct-present path skipped the SDL flip AND drew nothing, freezing the last
+   3D frame on screen (only the cursor updated). */
+static E_Boolean G_raveFrameOpen = FALSE ;
 
 /* Physical main-display size in pixels (the panel resolution), for centering. */
 static void IRaveScreenSize(int *w, int *h)
@@ -862,6 +871,7 @@ T_void RaveViewFinish(T_void)
     }
     G_raveFrameW = G_raveFrameH = 0 ;
     G_raveFrameReady = FALSE ;
+    G_raveFrameOpen  = FALSE ;
     G_raveEngine = NULL ;
 }
 
@@ -927,6 +937,7 @@ T_void RaveViewFrameBegin(T_void)
     IRaveSetBackground(G_raveContext) ;
     QARenderStart(G_raveContext, NULL, NULL) ;
     IRaveSetRenderState(G_raveContext) ;
+    G_raveFrameOpen = TRUE ;   /* a 3D pass is now open for this frame */
 }
 
 /* rave-9: read the just-rendered (held, un-swapped) buffer once and save it as a
@@ -989,7 +1000,8 @@ static void IRaveSaveShot(void)
    NOTE: an in-place QAAccessTexture reuse was tried to avoid the per-frame
    QATextureNew/Delete, but the engine hands back raw VRAM in a swizzled layout, so
    linear writes garble the UI. QATextureNew (which does the swizzle) it is. */
-static void IRaveUploadUI(const T_byte8 *ui8, int sw, int sh, int pitch)
+static void IRaveUploadUI(const T_byte8 *ui8, int sw, int sh, int pitch,
+                          E_Boolean fullOpaque)
 {
     const T_byte8  *ovl ;
     T_byte8        *buf ;
@@ -1027,8 +1039,11 @@ static void IRaveUploadUI(const T_byte8 *ui8, int sw, int sh, int pitch)
         T_byte8       *drow = buf + (T_word32)(vpad + y) * potW ;
         for (x = 0 ; x < sw ; x++) {
             /* transparent only where the 3D view shows: inside the view rect AND
-               the overlay is 0 (no 2D drawn over the view there). */
-            if ((x >= vx0) && (x < vx1) && (y >= vy0) && (y < vy1) &&
+               the overlay is 0 (no 2D drawn over the view there). fullOpaque
+               forces the whole frame opaque -- used on 2D-only screens (no 3D
+               pass this frame), where there is no 3D behind the hole to show. */
+            if ((!fullOpaque) &&
+                (x >= vx0) && (x < vx1) && (y >= vy0) && (y < vy1) &&
                 (ovl != NULL) && (ovl[(T_word32)y * 320 + x] == 0)) {
                 drow[x] = 0 ;                        /* transparent -> 3D shows */
             } else {
@@ -1128,14 +1143,31 @@ static void IRaveDrawUIQuad(void)
    composited frame to the fullscreen display. No readback, no CPU composite. */
 T_void RaveViewDrawUIAndPresent(const T_byte8 *ui8, int sw, int sh, int pitch)
 {
+    E_Boolean twoD ;
+
     if (!RaveViewIsActive() || !G_raveDirectPresent)
         return ;
 
+    /* twoD = no 3D pass was opened this frame (RaveViewFrameBegin didn't run):
+       we're on a 2D-only screen (townUI/shops/guild/full-screen menu). There is no
+       open pass to draw the UI over, so open one here, and present the 2D frame
+       fully OPAQUE (no 3D-view transparency hole). Without this the direct-present
+       path drew into a closed/stale pass and skipped SDL_Flip -> the last 3D frame
+       stayed frozen on screen. */
+    twoD = G_raveFrameOpen ? FALSE : TRUE ;
+    if (twoD) {
+        IRaveUpdateViewTransform() ;          /* refresh the dst rect (screen-only) */
+        IRaveSetBackground(G_raveContext) ;   /* clear color+Z to black on Start    */
+        QARenderStart(G_raveContext, NULL, NULL) ;
+        IRaveSetRenderState(G_raveContext) ;
+    }
+
 #if RAVE_PROFILE
-    G_profRestUs = IProfNowUs() - G_profFrameEndUs ;   /* software UI draw + game logic */
+    if (!twoD)
+        G_profRestUs = IProfNowUs() - G_profFrameEndUs ; /* software UI draw + game logic */
     RaveViewProfileCompositeBegin() ;      /* UI build + draw counts as composite */
 #endif
-    IRaveUploadUI(ui8, sw, sh, pitch) ;
+    IRaveUploadUI(ui8, sw, sh, pitch, twoD) ;
     IRaveDrawUIQuad() ;
     IRaveDrawLetterbox() ;   /* hide 3D that projected into the letterbox bars */
 
@@ -1152,6 +1184,7 @@ T_void RaveViewDrawUIAndPresent(const T_byte8 *ui8, int sw, int sh, int pitch)
         G_raveShotPending = FALSE ;
     }
     G_raveFrameReady = FALSE ;
+    G_raveFrameOpen  = FALSE ;   /* pass presented; next frame reopens if 3D draws */
 #if RAVE_PROFILE
     RaveViewProfileFrame() ;
 #endif

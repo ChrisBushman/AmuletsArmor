@@ -257,7 +257,7 @@ static void IWriteDefaultIni(void)
         "bpp=0\n"
         "detail=2\n"
         "vsync=0\n"
-        "renderer=rave\n",
+        "renderer=software\n",
         fp);
     fclose(fp);
 }
@@ -335,9 +335,9 @@ static void IReadIni(void)
         else if (ICompareKey(key, "renderer") == 0)  {
             /* rave-7: 3D renderer choice. "software" forces the CPU renderer;
                "rave"/"hardware" selects the RAVE HW backend. No-op on non-RAVE
-               builds. Unset -> rave (the default now that RAVE outperforms
-               software; see G_raveEnabled), auto-falling-back to software if the
-               HW context can't be created. No in-game toggle anymore. */
+               builds. Unset -> software (the safe default while in-game 2D
+               screens are still WIP in RAVE direct-present; see G_raveEnabled).
+               Opt in with renderer=rave. No in-game toggle anymore. */
             if (ICompareKey(value, "software") == 0)
                 RaveViewSetEnabled(FALSE);
             else if ((ICompareKey(value, "rave") == 0) ||
