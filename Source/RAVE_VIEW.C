@@ -50,6 +50,7 @@
  * RESSCALE.C feeds composite time in via RaveViewProfileFrame() at frame end.
  *-------------------------------------------------------------------------*/
 #define RAVE_PROFILE 1
+
 #if RAVE_PROFILE
 static unsigned long G_profUploadUs   = 0 ;   /* this frame (reset FrameBegin) */
 static T_word16      G_profUploads    = 0 ;   /* this frame                    */
@@ -68,9 +69,10 @@ static unsigned long G_profCompositeStart = 0 ;   /* set by CompositeBegin */
    ~180ms frame goes and whether the O(n) cache scan / strip-split is the cost. */
 static unsigned long G_profGeoUs = 0, G_profRestUs = 0 ;
 static unsigned long G_profFrameBeginUs = 0, G_profFrameEndUs = 0 ;
+static unsigned long G_profDrawUs = 0 ;   /* time in IRaveDrawTexturedQuad this frame */
 static T_word32      G_profQuads = 0, G_profStrips = 0, G_profDraws = 0 ;
 static T_word32      G_profCacheScans = 0 ;
-static unsigned long G_accGeo = 0, G_accRest = 0 ;
+static unsigned long G_accGeo = 0, G_accRest = 0, G_accDraw = 0 ;
 static T_word32      G_accQuads = 0, G_accStrips = 0, G_accDraws = 0 ;
 static unsigned long G_accCacheScans = 0 ;
 
@@ -914,6 +916,7 @@ T_void RaveViewFrameBegin(T_void)
     G_profFrameBeginUs = IProfNowUs() ;        /* start of BSP walk + emit */
     G_profQuads = G_profStrips = G_profDraws = 0 ;
     G_profCacheScans = 0 ;
+    G_profDrawUs = 0 ;
 #endif
 
     /* rave-4: background must be set before QARenderStart, which (NULL initial
@@ -1302,6 +1305,7 @@ T_void RaveViewProfileFrame(void)
     G_accComposite += compositeUs ;
     G_accGeo       += G_profGeoUs ;
     G_accRest      += G_profRestUs ;
+    G_accDraw      += G_profDrawUs ;
     G_accQuads     += G_profQuads ;
     G_accStrips    += G_profStrips ;
     G_accDraws     += G_profDraws ;
@@ -1323,8 +1327,12 @@ T_void RaveViewProfileFrame(void)
         unsigned long cp = (G_accComposite / f) / 100UL ;
         unsigned long nu = G_accUploads    / f ;            /* uploads / frame */
         unsigned long fp = (f * 10000000UL) / (elapsed ? elapsed : 1UL) ; /* fps*10 */
-        {   /* line 2: geometry/emit + rest phases, and emit WORK per frame */
+        {   /* line 2: split GEO into RAVE draw (setup+submit+fill) vs the software
+               geometry WALK (geo - draw), plus rest and draw count. */
             unsigned long ge = (G_accGeo  / f) / 100UL ;   /* tenths of a ms */
+            unsigned long dw = (G_accDraw / f) / 100UL ;
+            unsigned long wk = (G_accGeo > G_accDraw)
+                             ? (((G_accGeo - G_accDraw) / f) / 100UL) : 0UL ;
             unsigned long re = (G_accRest / f) / 100UL ;
             char buf2[128] ;
             sprintf(buf,
@@ -1332,16 +1340,15 @@ T_void RaveViewProfileFrame(void)
                 up/10, up%10, nu, rn/10, rn%10, rd/10, rd%10, cp/10, cp%10, fp/10, fp%10) ;
             MessageAdd((T_byte8 *)buf) ;
             sprintf(buf2,
-                "RAVE geo=%lu.%lu rest=%lu.%lu q=%lu dr=%lu st=%lu cs=%luk",
-                ge/10, ge%10, re/10, re%10,
-                (unsigned long)(G_accQuads / f), (unsigned long)(G_accDraws / f),
-                (unsigned long)(G_accStrips / f),
+                "RAVE geo=%lu.%lu draw=%lu.%lu walk=%lu.%lu rest=%lu.%lu dr=%lu cs=%luk",
+                ge/10, ge%10, dw/10, dw%10, wk/10, wk%10, re/10, re%10,
+                (unsigned long)(G_accDraws / f),
                 (unsigned long)((G_accCacheScans / f) / 1000UL)) ;
             MessageAdd((T_byte8 *)buf2) ;
         }
         G_accUpload = G_accRender = G_accReadback = G_accComposite = 0 ;
         G_accUploads = G_accFrames = 0 ;
-        G_accGeo = G_accRest = 0 ;
+        G_accGeo = G_accRest = G_accDraw = 0 ;
         G_accQuads = G_accStrips = G_accDraws = 0 ; G_accCacheScans = 0 ;
         G_profLastReportUs = now ;
     }
@@ -1418,8 +1425,8 @@ static T_void IRaveDrawTexturedQuad(
     float               invNW = 1.0f / normW ;
     float               invNH = 1.0f / normH ;
     int                 i ;
-
 #if RAVE_PROFILE
+    unsigned long       _tDraw = IProfNowUs() ;   /* RAVE draw = setup + submit (+ fill) */
     G_profDraws++ ;   /* one textured quad (2 tris) -- wall strip, sprite, or sky */
 #endif
     QASetPtr(G_raveContext, kQATag_Texture, tex) ;
@@ -1449,6 +1456,9 @@ static T_void IRaveDrawTexturedQuad(
 
     QADrawTriTexture(G_raveContext, &v[0], &v[1], &v[2], kQATriFlags_None) ;
     QADrawTriTexture(G_raveContext, &v[0], &v[2], &v[3], kQATriFlags_None) ;
+#if RAVE_PROFILE
+    G_profDrawUs += IProfNowUs() - _tDraw ;
+#endif
 }
 
 /* Interpolate a wall vertex along the top or bottom edge (a = left/near end,
