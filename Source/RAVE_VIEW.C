@@ -1077,6 +1077,23 @@ static void IRaveUploadUI(const T_byte8 *ui8, int sw, int sh, int pitch,
        the 3D view on hardware, so it's reverted to the full-view hole here and
        the escape menu + banner forms fall back to software (VIEW.C suspend). */
 
+    /* DIAGNOSTIC (ALT+F8): dump the present-time view-geometry values that decide
+       the transparency hole, so we can see WHY shrinking it blacked the 3D. Read
+       these off the Lombard: vw=VIEW3D_WIDTH vs=VIEW3D_SCALE cl/cr=VIEW3D_CLIP_*
+       hen=HighResViewWindowEnabled hx/hw=HighResViewWindow X/W ban=BannerIsOpen.
+       Prints ~twice/sec while profiling is on. Remove once the banner path lands. */
+    if (G_raveProfileOn && ((G_raveFrameNum & 31) == 0)) {
+        char dbg[96] ;
+        extern E_Boolean BannerIsOpen(T_void) ;
+        sprintf(dbg, "vw=%d vs=%d cl=%d cr=%d hen=%d hx=%d hw=%d ban=%d",
+                (int)VIEW3D_WIDTH, (int)VIEW3D_SCALE,
+                (int)VIEW3D_CLIP_LEFT, (int)VIEW3D_CLIP_RIGHT,
+                (int)HighResViewWindowEnabled(),
+                (int)HighResViewWindowX(), (int)HighResViewWindowW(),
+                (int)BannerIsOpen()) ;
+        MessageAdd((T_byte8 *)dbg) ;
+    }
+
     if (G_raveUITex != NULL) {
         QATextureDelete(G_raveEngine, G_raveUITex) ;
         G_raveUITex = NULL ;
