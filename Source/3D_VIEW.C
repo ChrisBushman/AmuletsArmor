@@ -3052,10 +3052,11 @@ INDICATOR_LIGHT(829, INDICATOR_RED) ;
         rvTR.z = zR ; rvTR.invW = invWR ; rvTR.u = uR ; rvTR.v = vTop ; rvTR.light = lightR ;
 
         /* opaque==3 = translucent (building windows etc.) -> blend at 0.5;
-           opaque==1 solid and opaque==2 masked stay opaque (alpha-test cutout
-           handles the masked holes). */
+           opaque==1 solid stays fully opaque; opaque==2 masked -> pass masked=1
+           so index 0 is the transparent cutout (grates/fences), not black. */
         RaveViewEmitQuad(G_wall.p_texture,
                          (G_wall.opaque == 3) ? 0.5f : 1.0f,
+                         (T_byte8)((G_wall.opaque == 2) ? 1 : 0),
                          &rvTL, &rvBL, &rvBR, &rvTR) ;
     }
 #endif /* macintosh && AA_RENDERER_RAVE */
@@ -5255,7 +5256,7 @@ DebugCheck(start < MAX_VIEW3D_WIDTH) ;
             fBR.x=sxR; fBR.y=syB; fBR.z=z; fBR.invW=invW; fBR.u=uRight; fBR.v=vRight; fBR.light=light ;
             fTR.x=sxR; fTR.y=syT; fTR.z=z; fTR.invW=invW; fTR.u=uRight; fTR.v=vRight; fTR.light=light ;
 
-            RaveViewEmitQuad(p_texture, 1.0f, &fTL, &fBL, &fBR, &fTR) ;
+            RaveViewEmitQuad(p_texture, 1.0f, 0, &fTL, &fBL, &fBR, &fTR) ;   /* floors solid */
         }
 #endif /* macintosh && AA_RENDERER_RAVE */
 

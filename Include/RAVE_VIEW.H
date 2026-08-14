@@ -54,11 +54,14 @@ typedef struct {
 /* Emit one wall/floor quad as two textured triangles (corners in order:
    top-left, bottom-left, bottom-right, top-right). p_texture is an AA texture
    pixel pointer (see IRaveGetTexture). alpha < 1 blends the quad (translucent
-   walls / building windows); use 1.0 for opaque. No-op if the texture can't be
-   uploaded or RAVE is inactive. */
+   walls / building windows); use 1.0 for opaque. masked != 0 = a masked wall
+   (AA opaque==2) whose palette index 0 is the transparent cutout; use 0 for
+   solid walls and floors, where index 0 is a real opaque black. No-op if the
+   texture can't be uploaded or RAVE is inactive. */
 T_void RaveViewEmitQuad(
            T_byte8 *p_texture,
            float alpha,
+           T_byte8 masked,
            const T_raveVertex *topLeft,
            const T_raveVertex *bottomLeft,
            const T_raveVertex *bottomRight,

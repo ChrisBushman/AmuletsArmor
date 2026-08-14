@@ -83,12 +83,50 @@ static E_Boolean G_raveSuspended  = FALSE ;
  *-------------------------------------------------------------------------*/
 typedef struct {
     T_byte8    *key ;      /* G_3d*TextureArray[] pixel pointer (identity)   */
+    T_sword16   level ;    /* baked shade level 0..63; -1 = the sky flat     */
     TQATexture *tex ;      /* uploaded RAVE texture (NULL == known-bad)      */
+    T_word32    lastUsed ; /* frame # last drawn -- LRU eviction             */
 } T_raveTexEntry ;
 
 static T_raveTexEntry  *G_raveTexCache = NULL ;
 static T_word16         G_raveTexCount = 0 ;
 static T_word16         G_raveTexMax   = 0 ;
+#define RAVE_TEX_BUDGET 256         /* max cached (texture,level) CL8 textures    */
+static T_word32         G_raveFrameNum = 0 ;   /* bumped each FrameBegin (for LRU) */
+
+/* Quantize a 0..63 shade level to 16 buckets (step 4). Baking each texture at
+   every one of 64 levels would multiply VRAM/cache 64x; 16 shades is smooth
+   enough and keeps a wall's strip-split to at most 16 distinct bakes. */
+#define RAVE_SHADE_Q(lvl)  ((T_sword16)((lvl) & ~3))
+
+/* Bit OR'd into a cache-key level to mark a MASKED surface (opaque==2 walls,
+   sprites) whose palette index 0 is the transparent cutout. On SOLID surfaces
+   (walls opaque==1/3, floors) index 0 is instead a real opaque black, so the two
+   bake differently and must cache as separate (pointer,level) variants. The low
+   6 bits hold the 0..63 shade level; RAVE_SHADE_Q's &~3 preserves this bit. */
+#define RAVE_MASKED_KEY  0x0100
+
+/* An opaque near-black palette index (darkest non-0 entry), computed with the
+   palette table. Used when a NON-transparent texel shades down to index 0: on a
+   masked/solid surface that texel must stay opaque (software draws palette[0]
+   solid), but our transparent index is 0 -- so we substitute this instead of
+   punching a see-through hole. */
+static T_byte8 G_raveSafeBlack = 1 ;
+
+/*-------------------------------------------------------------------------*
+ * Phase 3 shading: BAKED shade levels. RAVE color tables bind per-TEXTURE (not
+ * per-draw) and draws are deferred, so a per-primitive CLUT can't work when many
+ * walls share one texture (they'd all resolve to the last-bound table). Instead
+ * each (texture, shadeLevel) pair is baked into its OWN CL8 texture whose indices
+ * are the source indices remapped through P_shadeIndex[level] (index 0 kept
+ * transparent) -- the exact software shade -- and ONE shared, unshaded palette
+ * color table (G_paletteTable, entry i = palette[i], index 0 transparent) is bound
+ * to every such texture (same table for all -> deferred-safe). Bakes are
+ * on-demand, cache keyed by (pointer,level), LRU-evicted at RAVE_TEX_BUDGET. The
+ * sky stays ARGB16/full-bright (it isn't shaded).
+ *-------------------------------------------------------------------------*/
+extern T_byte8 P_shadeIndex[16384] ;   /* 64 x 256 shade->index remap (3D_VIEW.C) */
+static TQAColorTable *G_paletteTable = NULL ;
 
 /*-------------------------------------------------------------------------*
  * IPickHardwareEngine -- enumerate the RAVE engines on a device and return
@@ -209,6 +247,48 @@ static unsigned short IRaveArgb16(const T_palette pal, T_byte8 idx)
     return (unsigned short)(0x8000 | (r5 << 10) | (g5 << 5) | b5) ;
 }
 
+/* Build the single shared unshaded-palette color table (entry i = palette[i] in
+   RGB32; 6-bit VGA channels -> 8-bit via <<2). Bound to every baked CL8 texture;
+   the shading lives in the baked indices, not the table. Lazy -- built when the
+   palette is loaded. transparentIndexFlag=1 makes index 0 (AA's transparent
+   colour) the transparent entry, matching the masked-wall/sprite cutout. */
+static TQAColorTable *IPaletteTable(void)
+{
+    T_palette     pal ;
+    unsigned long entry[256] ;
+    int           i ;
+
+    if (G_paletteTable != NULL)
+        return G_paletteTable ;
+    if (G_raveEngine == NULL)
+        return NULL ;
+    GrGetPalette(0, 256, pal) ;
+    {
+        int darkest = 0x7FFFFFFF ;
+        G_raveSafeBlack = 1 ;
+        for (i = 0 ; i < 256 ; i++) {
+            unsigned long r = (unsigned long)((pal[i][0] & 0x3F) << 2) ;
+            unsigned long g = (unsigned long)((pal[i][1] & 0x3F) << 2) ;
+            unsigned long b = (unsigned long)((pal[i][2] & 0x3F) << 2) ;
+            entry[i] = (r << 16) | (g << 8) | b ;   /* R=23:16 G=15:8 B=7:0 */
+            /* darkest non-transparent (index != 0) entry -> opaque "safe black" */
+            if (i != 0) {
+                int lum = (int)(r + g + b) ;
+                if (lum < darkest) { darkest = lum ; G_raveSafeBlack = (T_byte8)i ; }
+            }
+        }
+    }
+    QAColorTableNew(G_raveEngine, kQAColorTable_CL8_RGB32, entry, 1L, &G_paletteTable) ;
+    return G_paletteTable ;
+}
+
+static void IFreePaletteTable(void)
+{
+    if ((G_paletteTable != NULL) && (G_raveEngine != NULL))
+        QAColorTableDelete(G_raveEngine, G_paletteTable) ;
+    G_paletteTable = NULL ;
+}
+
 static T_word16 INextPow2(T_word16 v) ;   /* defined below; used to POT-pad */
 
 /* Upload a single AA texture (column-major, 8-bit palettized, pointer past
@@ -225,15 +305,16 @@ static T_word16 INextPow2(T_word16 v) ;   /* defined below; used to POT-pad */
    and non-POT textures sample the correct sub-rect. A non-POT texture that
    *tiles* may show its transparent pad at the wrap edge, but most non-POT
    textures are non-tiling decals, so this recovers nearly all missing surfaces. */
-static TQATexture *IRaveUploadTexture(T_byte8 *p)
+static TQATexture *IRaveUploadTexture(T_byte8 *p, T_sword16 level)
 {
     T_word16        w, h, potW, potH ;
-    unsigned short *buf ;
-    T_palette       pal ;
+    T_byte8        *buf, *remap ;
     TQAImage        image ;
     TQATexture     *tex = NULL ;
     T_word16        col, row ;
     TQAError        err ;
+    int             masked ;
+    T_byte8         lut[256] ;
 
     if ((p == NULL) || (p == G_textureNone + 4))
         return NULL ;                   /* the "no texture" sentinel */
@@ -247,38 +328,53 @@ static TQATexture *IRaveUploadTexture(T_byte8 *p)
     potW = INextPow2(w) ;
     potH = INextPow2(h) ;
 
-    buf = (unsigned short *)MemAlloc((T_word32)potW * (T_word32)potH * 2UL) ;
+    masked = (level & RAVE_MASKED_KEY) ? 1 : 0 ;
+    level &= 0x3F ;                                  /* strip flag -> 0..63 */
+    remap = &P_shadeIndex[(T_word32)level << 8] ;    /* shade remap for this level */
+
+    /* CL8: one index byte per texel, shading baked in. Bake LUT: source index ->
+       stored index. SOLID (masked==0, walls opaque==1/3 + floors): every index
+       incl 0 gets its shaded colour, and a texel that shades to 0 becomes the
+       opaque safe-black -- solid surfaces are NEVER transparent (index 0 in an AA
+       solid texture is real black, not a cutout). MASKED (==1, opaque==2 walls):
+       source index 0 stays the transparent 0; other indices shade, substituting
+       safe-black for a shade-to-0 so lit-but-dark texels don't punch holes. */
+    lut[0] = masked ? 0 : (remap[0] ? remap[0] : G_raveSafeBlack) ;
+    { int li ; for (li = 1 ; li < 256 ; li++)
+        lut[li] = remap[li] ? remap[li] : G_raveSafeBlack ; }
+
+    buf = (T_byte8 *)MemAlloc((T_word32)potW * (T_word32)potH) ;
     if (buf == NULL)
         return NULL ;
-    /* Transparent pad first (only matters when potW>w / potH>h). */
+    /* Index-0 pad first (index 0 = transparent via the color table). */
     { T_word32 n = (T_word32)potW * (T_word32)potH, k ;
       for (k = 0 ; k < n ; k++) buf[k] = 0 ; }
 
-    GrGetPalette(0, 256, pal) ;
-
     /* AA stores textures column-major: texel(col,row) at p[col*h + row].
-       Emit row-major into the POT buffer: dst[row*potW + col]. Texel
-       orientation vs RAVE's UV space is handled by the UV mapping in rave-5. */
+       Emit row-major into the POT buffer: dst[row*potW + col] = baked index. */
     for (col = 0 ; col < w ; col++) {
-        T_byte8        *srcCol = p + ((T_word32)col * h) ;
-        unsigned short *dstCol = buf + col ;
+        T_byte8 *srcCol = p + ((T_word32)col * h) ;
+        T_byte8 *dstCol = buf + col ;
         for (row = 0 ; row < h ; row++)
-            dstCol[(T_word32)row * potW] = IRaveArgb16(pal, srcCol[row]) ;
+            dstCol[(T_word32)row * potW] = lut[srcCol[row]] ;
     }
 
     image.width    = (long)potW ;
     image.height   = (long)potH ;
-    image.rowBytes = (long)potW * 2 ;
+    image.rowBytes = (long)potW ;      /* 1 byte/pixel (CL8) */
     image.pixmap   = buf ;
 
     /* Default flags copy the image into engine/VRAM storage, so buf is ours
        to free immediately after. */
-    err = QATextureNew(G_raveEngine, kQATexture_None, kQAPixel_ARGB16,
+    err = QATextureNew(G_raveEngine, kQATexture_None, kQAPixel_CL8,
                        &image, &tex) ;
     MemFree(buf) ;
 
     if (err != kQANoErr)
         return NULL ;
+    if (G_paletteTable == NULL) IPaletteTable() ;
+    if (G_paletteTable != NULL)
+        QATextureBindColorTable(G_raveEngine, tex, G_paletteTable) ;
     return tex ;
 }
 
@@ -307,22 +403,31 @@ typedef struct {
    [0..w) x [0..h) of the POT texture; the emitter normalizes u,v by the POT
    size. Empty columns / index-0 texels / rows outside [start..end] are
    transparent. Returns NULL (cached) if unusable. */
-static TQATexture *IRaveUploadSprite(T_byte8 *p_picture, T_word16 w, T_word16 h)
+static TQATexture *IRaveUploadSprite(T_byte8 *p_picture, T_word16 w, T_word16 h, T_sword16 level)
 {
     T_word16        potW, potH, vpad ;
-    unsigned short *buf ;
-    T_palette       pal ;
+    T_byte8        *buf, *remap ;
     TQAImage        image ;
     TQATexture     *tex = NULL ;
     T_word16        col ;
     const T_raveRaster *cols = (const T_raveRaster *)p_picture ;
     TQAError        err ;
+    T_byte8         lut[256] ;
 
     if ((p_picture == NULL) || (w == 0) || (h == 0) || (w > 1024) || (h > 1024))
         return NULL ;
 
     potW = INextPow2(w) ;
     potH = INextPow2(h) ;
+    level &= 0x3F ;                                  /* 0..63 (sprites are masked) */
+    remap = &P_shadeIndex[(T_word32)level << 8] ;   /* shade remap for this level */
+
+    /* Sprites are always masked: source index 0 = transparent; other indices
+       shade, safe-black-substituting a shade-to-0 so dark texels stay opaque
+       (software draws them palette[0], not see-through). See IRaveUploadTexture. */
+    lut[0] = 0 ;
+    { int li ; for (li = 1 ; li < 256 ; li++)
+        lut[li] = remap[li] ? remap[li] : G_raveSafeBlack ; }
     /* RAVE samples texture V "upward" (v=0 is the BOTTOM row of the image), so
        the sprite content must sit flush with the BOTTOM of the POT texture, rows
        [vpad, potH), with the transparent pad ABOVE it. If it sat at the top
@@ -330,20 +435,19 @@ static TQATexture *IRaveUploadSprite(T_byte8 *p_picture, T_word16 w, T_word16 h)
        the sprite would render as mostly pad (the "crop"). vpad=0 when h is POT. */
     vpad = (T_word16)(potH - h) ;
 
-    buf = (unsigned short *)MemAlloc((T_word32)potW * (T_word32)potH * 2UL) ;
+    /* CL8: one palette-index byte per texel (shaded by the bound color table). */
+    buf = (T_byte8 *)MemAlloc((T_word32)potW * (T_word32)potH) ;
     if (buf == NULL)
         return NULL ;
-    /* transparent everywhere first */
+    /* index-0 (transparent via color table) everywhere first */
     {
         T_word32 n = (T_word32)potW * (T_word32)potH, k ;
         for (k = 0 ; k < n ; k++)
             buf[k] = 0 ;
     }
 
-    GrGetPalette(0, 256, pal) ;
-
-    /* Decode each column's opaque run into the row-major POT buffer. Content is
-       placed BOTTOM-aligned (rows [vpad,potH)) because RAVE samples V upward. */
+    /* Decode each column's opaque run into the row-major POT buffer as raw
+       indices. Content is BOTTOM-aligned (rows [vpad,potH)) -- RAVE samples V up. */
     for (col = 0 ; col < w ; col++) {
         T_byte8 st = cols[col].start ;
         T_byte8 en = cols[col].end ;
@@ -356,87 +460,124 @@ static TQATexture *IRaveUploadSprite(T_byte8 *p_picture, T_word16 w, T_word16 h)
         if (en >= h)
             en = (T_byte8)(h - 1) ;
         for (r = st ; r <= en ; r++)
-            buf[(T_word32)(vpad + r) * potW + col] = IRaveArgb16(pal, colBase[r]) ;
+            buf[(T_word32)(vpad + r) * potW + col] = lut[colBase[r]] ;
     }
 
     image.width    = (long)potW ;
     image.height   = (long)potH ;
-    image.rowBytes = (long)potW * 2 ;
+    image.rowBytes = (long)potW ;      /* 1 byte/pixel (CL8) */
     image.pixmap   = buf ;
 
-    err = QATextureNew(G_raveEngine, kQATexture_None, kQAPixel_ARGB16,
+    err = QATextureNew(G_raveEngine, kQATexture_None, kQAPixel_CL8,
                        &image, &tex) ;
     MemFree(buf) ;
 
     if (err != kQANoErr)
         return NULL ;
+    if (G_paletteTable == NULL) IPaletteTable() ;
+    if (G_paletteTable != NULL)
+        QATextureBindColorTable(G_raveEngine, tex, G_paletteTable) ;
     return tex ;
 }
 
-/* Cache lookup by key pointer; returns the entry index or 0xFFFF. */
-static T_word16 IRaveCacheFind(T_byte8 *key)
+/* Cache lookup by (key pointer, shade level); returns entry index or 0xFFFF and
+   marks the hit as used (for LRU). level -1 is the sky flat. */
+static T_word16 IRaveCacheFind(T_byte8 *key, T_sword16 level)
 {
     T_word16 i ;
     for (i = 0 ; i < G_raveTexCount ; i++) {
-        if (G_raveTexCache[i].key == key)
+        if ((G_raveTexCache[i].key == key) && (G_raveTexCache[i].level == level)) {
+            G_raveTexCache[i].lastUsed = G_raveFrameNum ;
             return i ;
+        }
     }
     return 0xFFFF ;
 }
 
-/* Add (key, tex) to the cache (growing it), caching NULL too so a known-bad
-   texture isn't retried every frame. Returns tex. */
-static TQATexture *IRaveCacheAdd(T_byte8 *key, TQATexture *tex)
+/* Add (key, level, tex). At RAVE_TEX_BUDGET, reclaim the least-recently-used
+   slot -- but ONLY from entries NOT used this frame. An entry used this frame has
+   a deferred QADrawTriTexture pending against its texture (RAVE renders at
+   QARenderEnd, not at submit); deleting it now blanks that geometry -- the
+   disappearing-when-close bug. If every entry is in-flight, append (grow) instead
+   so nothing pending is freed; the overflow trims back on a later, lighter frame.
+   NULL (known-bad) is cached too, so it isn't retried every frame. Returns tex. */
+static TQATexture *IRaveCacheAdd(T_byte8 *key, T_sword16 level, TQATexture *tex)
 {
-    if (G_raveTexCount >= G_raveTexMax) {
-        T_word16        newMax = (T_word16)(G_raveTexMax ? G_raveTexMax * 2 : 64) ;
-        T_raveTexEntry *grown  =
-            (T_raveTexEntry *)MemAlloc((T_word32)newMax * sizeof(T_raveTexEntry)) ;
-        T_word16        i ;
-        if (grown == NULL)
-            return tex ;                /* out of memory: use it, just don't cache */
-        if (G_raveTexCache != NULL) {
-            for (i = 0 ; i < G_raveTexCount ; i++)
-                grown[i] = G_raveTexCache[i] ;
-            MemFree(G_raveTexCache) ;
+    T_word16 slot = 0xFFFF ;
+
+    if (G_raveTexCount >= RAVE_TEX_BUDGET) {
+        T_word16 i, lru = 0xFFFF ;
+        for (i = 0 ; i < G_raveTexCount ; i++) {
+            if (G_raveTexCache[i].lastUsed == G_raveFrameNum)
+                continue ;             /* in-flight this frame -- must not free */
+            if ((lru == 0xFFFF) ||
+                (G_raveTexCache[i].lastUsed < G_raveTexCache[lru].lastUsed))
+                lru = i ;
         }
-        G_raveTexCache = grown ;
-        G_raveTexMax   = newMax ;
+        if (lru != 0xFFFF) {
+            if ((G_raveTexCache[lru].tex != NULL) && (G_raveEngine != NULL))
+                QATextureDelete(G_raveEngine, G_raveTexCache[lru].tex) ;
+            slot = lru ;
+        }
+        /* else: all entries used this frame -> fall through to append (grow) */
     }
-    G_raveTexCache[G_raveTexCount].key = key ;
-    G_raveTexCache[G_raveTexCount].tex = tex ;
-    G_raveTexCount++ ;
+
+    if (slot == 0xFFFF) {
+        if (G_raveTexCount >= G_raveTexMax) {
+            T_word16        newMax = (T_word16)(G_raveTexMax ? G_raveTexMax * 2 : 64) ;
+            T_raveTexEntry *grown  =
+                (T_raveTexEntry *)MemAlloc((T_word32)newMax * sizeof(T_raveTexEntry)) ;
+            T_word16        i ;
+            if (grown == NULL)
+                return tex ;            /* out of memory: use it, don't cache */
+            if (G_raveTexCache != NULL) {
+                for (i = 0 ; i < G_raveTexCount ; i++)
+                    grown[i] = G_raveTexCache[i] ;
+                MemFree(G_raveTexCache) ;
+            }
+            G_raveTexCache = grown ;
+            G_raveTexMax   = newMax ;
+        }
+        slot = G_raveTexCount ;
+        G_raveTexCount++ ;
+    }
+    G_raveTexCache[slot].key      = key ;
+    G_raveTexCache[slot].level    = level ;
+    G_raveTexCache[slot].tex      = tex ;
+    G_raveTexCache[slot].lastUsed = G_raveFrameNum ;
     return tex ;
 }
 
-/* Flat wall/floor texture, uploaded + cached on first use (keyed by pointer). */
-static TQATexture *IRaveGetTexture(T_byte8 *p)
+/* Wall/floor texture baked at shade LEVEL (0..63), uploaded + cached on first use. */
+static TQATexture *IRaveGetTexture(T_byte8 *p, T_sword16 level)
 {
     T_word16 i ;
 
     if ((p == NULL) || (p == G_textureNone + 4))
         return NULL ;
 
-    i = IRaveCacheFind(p) ;
+    level = RAVE_SHADE_Q(level) ;        /* 16 shade buckets -- see RAVE_SHADE_Q */
+    i = IRaveCacheFind(p, level) ;
     if (i != 0xFFFF)
         return G_raveTexCache[i].tex ;   /* may be NULL == known-bad */
 
-    return IRaveCacheAdd(p, IRaveUploadTexture(p)) ;
+    return IRaveCacheAdd(p, level, IRaveUploadTexture(p, level)) ;
 }
 
-/* Sprite picture (column-sparse), uploaded + cached on first use. */
-static TQATexture *IRaveGetSprite(T_byte8 *p_picture, T_word16 w, T_word16 h)
+/* Sprite picture baked at shade LEVEL, uploaded + cached on first use. */
+static TQATexture *IRaveGetSprite(T_byte8 *p_picture, T_word16 w, T_word16 h, T_sword16 level)
 {
     T_word16 i ;
 
     if (p_picture == NULL)
         return NULL ;
 
-    i = IRaveCacheFind(p_picture) ;
+    level = RAVE_SHADE_Q(level) ;        /* 16 shade buckets -- see RAVE_SHADE_Q */
+    i = IRaveCacheFind(p_picture, level) ;
     if (i != 0xFFFF)
         return G_raveTexCache[i].tex ;
 
-    return IRaveCacheAdd(p_picture, IRaveUploadSprite(p_picture, w, h)) ;
+    return IRaveCacheAdd(p_picture, level, IRaveUploadSprite(p_picture, w, h, level)) ;
 }
 
 T_void RaveViewFlushTextures(T_void)
@@ -453,6 +594,10 @@ T_void RaveViewFlushTextures(T_void)
     }
     G_raveTexCount = 0 ;
     G_raveTexMax   = 0 ;
+
+    /* Drop the shared palette color table too -- it was built from this level's
+       palette and rebuilds lazily on the next bake. */
+    IFreePaletteTable() ;
 }
 
 /*-------------------------------------------------------------------------*
@@ -565,6 +710,8 @@ T_void RaveViewFrameBegin(T_void)
 {
     if (!RaveViewIsActive())
         return ;
+
+    G_raveFrameNum++ ;   /* for LRU (IRaveCacheFind/Add stamp lastUsed with this) */
 
     /* rave-4: background must be set before QARenderStart, which (NULL initial
        context) clears the color + Z buffers to it. */
@@ -747,13 +894,13 @@ static T_void IRaveDrawTexturedQuad(
         /* RAVE wants u/w, v/w; it divides by interpolated invW per pixel. */
         v[i].uOverW = (src[i]->u * invNW) * src[i]->invW ;
         v[i].vOverW = (src[i]->v * invNH) * src[i]->invW ;
-        /* Under kQATextureOp_Modulate, r/g/b are ignored; light goes in kd_*.
-           alpha < 1 makes the quad blend (translucent walls / windows); the
-           final texel alpha = texel.a * alpha still passes the alpha-test cutout
-           (ref 0.25) so masked holes drop but 0.5 translucency survives. */
+        /* Shading is BAKED into the texture (indices pre-remapped through
+           P_shadeIndex per level), so kd is full-bright 1.0 -- Modulate leaves the
+           texel colour intact. alpha < 1 blends (translucent walls / windows);
+           final texel alpha = texel.a * alpha still passes the alpha-test cutout. */
         v[i].r = v[i].g = v[i].b = 0.0f ;
         v[i].a = alpha ;
-        v[i].kd_r = v[i].kd_g = v[i].kd_b = src[i]->light ;
+        v[i].kd_r = v[i].kd_g = v[i].kd_b = 1.0f ;
         v[i].ks_r = v[i].ks_g = v[i].ks_b = 0.0f ;
     }
 
@@ -761,31 +908,100 @@ static T_void IRaveDrawTexturedQuad(
     QADrawTriTexture(G_raveContext, &v[0], &v[2], &v[3], kQATriFlags_None) ;
 }
 
+/* Interpolate a wall vertex along the top or bottom edge (a = left/near end,
+   b = right/far end) at fraction t, for splitting a wall into shade strips. On a
+   perspective wall x/y/z/invW and light are linear in screen X; u is
+   perspective-correct (u*invW is the linear quantity); v is constant along the
+   edge (top or bottom). */
+static void IInterpAlong(T_raveVertex *out, const T_raveVertex *a,
+                         const T_raveVertex *b, float t)
+{
+    float uowA = a->u * a->invW ;
+    float uowB = b->u * b->invW ;
+    out->x     = a->x    + (b->x    - a->x)    * t ;
+    out->y     = a->y    + (b->y    - a->y)    * t ;
+    out->z     = a->z    + (b->z    - a->z)    * t ;
+    out->invW  = a->invW + (b->invW - a->invW) * t ;
+    out->u     = (uowA + (uowB - uowA) * t) / out->invW ;
+    out->v     = a->v ;
+    out->light = a->light + (b->light - a->light) * t ;
+}
+
 /* Walls + floors/ceilings: flat AA texture (pointer past its 4-byte header).
-   alpha < 1 blends the quad (translucent walls / building windows). */
+   alpha < 1 blends the quad (translucent walls / building windows).
+
+   SHADE-STRIP split: on a wall the shade level runs left->right (near end vs far
+   end), so we split the quad into one vertical strip per shade level it spans and
+   fetch each strip's OWN texture baked at that level (IRaveGetTexture) -- so
+   shading follows distance smoothly across the face (near software's per-column
+   look) instead of one flat level for the whole face. Uniform quads -- floor
+   scanlines are one distance -> levelL==levelR -> a single quad, so only walls
+   actually split.
+
+   masked != 0 marks an opaque==2 wall whose palette index 0 is the transparent
+   cutout; it is OR'd into the bake/cache key (RAVE_MASKED_KEY) so index 0 stays
+   see-through. On solid walls + floors (masked==0) index 0 is a real opaque
+   black. */
+#define RAVE_MAX_STRIPS 16
 T_void RaveViewEmitQuad(
            T_byte8 *p_texture,
            float alpha,
+           T_byte8 masked,
            const T_raveVertex *topLeft,
            const T_raveVertex *bottomLeft,
            const T_raveVertex *bottomRight,
            const T_raveVertex *topRight)
 {
     TQATexture *tex ;
+    float       normW, normH ;
+    int         levelL, levelR, n, i ;
+    T_sword16   mkey = masked ? RAVE_MASKED_KEY : 0 ;
 
     if (!RaveViewIsActive())
         return ;
-    tex = IRaveGetTexture(p_texture) ;
-    if (tex == NULL)
-        return ;                        /* untextured / bad -> skip */
+    if ((p_texture == NULL) || (p_texture == G_textureNone + 4))
+        return ;                        /* untextured -> skip */
 
-    /* Normalize u,v by the POT size the texture was uploaded at (IRaveUploadTexture
-       pads non-POT textures up), NOT the logical size -- for POT textures these
-       are identical, for padded ones this samples the real [0..w)x[0..h) sub-rect. */
-    IRaveDrawTexturedQuad(tex,
-        (float)INextPow2(PictureGetWidth(p_texture)),
-        (float)INextPow2(PictureGetHeight(p_texture)),
-        alpha, topLeft, bottomLeft, bottomRight, topRight) ;
+    /* Normalize u,v by the POT upload size (not logical) -- see IRaveUploadTexture. */
+    normW = (float)INextPow2(PictureGetWidth(p_texture)) ;
+    normH = (float)INextPow2(PictureGetHeight(p_texture)) ;
+
+    levelL = (int)(topLeft->light  * 63.0f + 0.5f) ;
+    levelR = (int)(topRight->light * 63.0f + 0.5f) ;
+    if (levelL < 0) levelL = 0 ; if (levelL > 63) levelL = 63 ;
+    if (levelR < 0) levelR = 0 ; if (levelR > 63) levelR = 63 ;
+    /* strips = number of distinct 16-shade buckets the face spans (bake level is
+       quantized to those buckets inside IRaveGetTexture -- see RAVE_SHADE_Q), so a
+       wall never generates more than 16 baked variants no matter how close. */
+    n = (RAVE_SHADE_Q(levelL) - RAVE_SHADE_Q(levelR)) >> 2 ;
+    if (n < 0) n = -n ; n += 1 ;
+    if (n <= 1) {                                        /* uniform -> one quad */
+        tex = IRaveGetTexture(p_texture, (T_sword16)(levelL | mkey)) ;
+        if (tex != NULL)
+            IRaveDrawTexturedQuad(tex, normW, normH, alpha,
+                                  topLeft, bottomLeft, bottomRight, topRight) ;
+        return ;
+    }
+    if (n > RAVE_MAX_STRIPS)
+        n = RAVE_MAX_STRIPS ;
+    for (i = 0 ; i < n ; i++) {
+        float        t0 = (float)i / (float)n ;
+        float        t1 = (float)(i + 1) / (float)n ;
+        T_raveVertex sTL, sBL, sBR, sTR ;
+        int          slevel ;
+        IInterpAlong(&sTL, topLeft,    topRight,    t0) ;
+        IInterpAlong(&sBL, bottomLeft, bottomRight, t0) ;
+        IInterpAlong(&sBR, bottomLeft, bottomRight, t1) ;
+        IInterpAlong(&sTR, topLeft,    topRight,    t1) ;
+        slevel = (int)(((sTL.light + sBL.light + sBR.light + sTR.light) * 0.25f)
+                       * 63.0f + 0.5f) ;
+        if (slevel < 0)  slevel = 0 ;
+        if (slevel > 63) slevel = 63 ;
+        tex = IRaveGetTexture(p_texture, (T_sword16)(slevel | mkey)) ;
+        if (tex != NULL)
+            IRaveDrawTexturedQuad(tex, normW, normH, alpha,
+                                  &sTL, &sBL, &sBR, &sTR) ;
+    }
 }
 
 /* Flat row-major 8-bit raster (the sky backdrop) -> POT ARGB16, fully OPAQUE
@@ -847,10 +1063,10 @@ static TQATexture *IRaveGetFlat(T_byte8 *raw, T_word16 w, T_word16 h)
     T_word16 i ;
     if (raw == NULL)
         return NULL ;
-    i = IRaveCacheFind(raw) ;
+    i = IRaveCacheFind(raw, -1) ;   /* -1 = the unshaded sky flat */
     if (i != 0xFFFF)
         return G_raveTexCache[i].tex ;
-    return IRaveCacheAdd(raw, IRaveUploadFlat(raw, w, h)) ;
+    return IRaveCacheAdd(raw, -1, IRaveUploadFlat(raw, w, h)) ;
 }
 
 /* rave-8: sky backdrop quad. raw is a row-major 8-bit panorama (stride w);
@@ -872,7 +1088,7 @@ T_void RaveViewEmitSky(
     if (tex == NULL)
         return ;
     IRaveDrawTexturedQuad(tex,
-        (float)INextPow2(w), (float)INextPow2(h), 1.0f,
+        (float)INextPow2(w), (float)INextPow2(h), 1.0f,   /* sky ARGB16, full bright */
         topLeft, bottomLeft, bottomRight, topRight) ;
 }
 
@@ -888,15 +1104,20 @@ T_void RaveViewEmitSprite(
            const T_raveVertex *topRight)
 {
     TQATexture *tex ;
+    int         level ;
 
     if (!RaveViewIsActive())
         return ;
-    tex = IRaveGetSprite(p_picture, w, h) ;
+    /* One shade level for the whole billboard (a sprite is at a single distance). */
+    level = (int)(topLeft->light * 63.0f + 0.5f) ;
+    if (level < 0)  level = 0 ;
+    if (level > 63) level = 63 ;
+    tex = IRaveGetSprite(p_picture, w, h, (T_sword16)level) ;
     if (tex == NULL)
         return ;
 
     IRaveDrawTexturedQuad(tex,
-        (float)INextPow2(w), (float)INextPow2(h), 1.0f,
+        (float)INextPow2(w), (float)INextPow2(h), 1.0f,   /* shading baked in */
         topLeft, bottomLeft, bottomRight, topRight) ;
 }
 
