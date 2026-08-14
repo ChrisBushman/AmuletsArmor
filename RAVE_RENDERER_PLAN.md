@@ -8,6 +8,62 @@ staged now* from *validation that must wait for the machine*.
 
 ---
 
+## STATUS (2026-08-14) — DIRECT-TO-SCREEN LANDED; PERFORMANCE PASS IS NEXT
+
+Phases 1–4 are done and confirmed on hardware (baked CL8 shade-levels, sprite
+crop, sky, masked/opaque index-0, tint). **Phase 5.3 (kill the readback + CPU
+composite) is DONE** — commit `8a8c8699` on `fork/renderer/rave`. RAVE now owns the
+fullscreen present (renders direct to a swappable context, draws the 2D UI as a
+GPU quad over the 3D, `QARenderEnd`-swaps; SDL never presents). Visuals are correct
+and centered on the panel. `renderer=software|rave` is a `resolution.ini` option
+(default software); F12 toggles live.
+
+**Measured on hardware (fullscreen 640×480 surface on a 1024×768 panel):**
+`RN(render)≈8.5ms · RD(readback)=0.0 · CP(UI-texture rebuild)≈14ms · FPS≈4–6.4`.
+The old readback (~20ms) + composite (~38ms) are gone. **RAVE is still a bit slower
+than software** — but only ~22ms of the ~180–200ms frame is measured; the rest is
+unmeasured (BSP walk, RAVE emit, software UI draw, game logic).
+
+### Performance pass — prioritized for next session
+
+1. **Instrument the unmeasured ~180ms FIRST (gates everything else).** Extend the
+   `RAVE_PROFILE` block with phases for the **RAVE emit** (bracket the
+   `RaveViewEmitQuad/Sprite` work inside the 3D_VIEW.C BSP walk) and the **software
+   UI draw**. We are optimizing blind until this split exists; the emit is the prime
+   suspect for the software-vs-RAVE gap.
+
+2. **`CP` dirty-skip (~14ms → ~0 on static frames).** Checksum the 320×200 UI frame
+   (`G_shadow`) each frame; if unchanged, reuse the cached `G_raveUITex` and skip the
+   CL8 build + upload entirely. HUD is static most frames. Pair with reusing ONE
+   texture via `QAAccessTexture` (see reference/mac-rave-sdk/RAVE.h) instead of
+   `QATextureNew`/`Delete` every frame. Note: the once-a-second profiler MessageAdd
+   and any HUD animation will still force a rebuild — that's fine.
+
+3. **Emit cost (do after #1 confirms it's heavy) — see also Phase 5.4 below:**
+   - The `(pointer,level)` texture cache is a **linear scan of up to
+     `RAVE_TEX_BUDGET` (256) entries per strip per wall** (`IRaveCacheFind`).
+     Replace with a hash / small direct map → O(1). Cheap, likely-big win.
+   - **Reduce strip-split** (`RAVE_MAX_STRIPS` 16 → ~8, or skip for small/distant
+     walls): fewer cache lookups, fewer `QADrawTriTexture` calls, less GPU.
+   - Consider **batching** per-quad `QADrawTriTexture` into `QASubmitVerticesTexture`
+     / trimesh to cut per-call overhead.
+
+4. **`RN` (~8.5ms, GPU):** try `kQATextureFilter_Fast` instead of `_Best` in
+   `IRaveSetRenderState` — likely faster sampling *and* the crisp classic-pixel look.
+   Lower priority.
+
+Reference: the COMPLETE CodeWarrior `RAVE.h` / `QD3D.h` are vendored in
+`reference/mac-rave-sdk/` (QADrawTriGouraud, QAAccessTexture, the full tag/enum set).
+The clip is fixed at `QADrawContextNew` — there is no per-frame clip API
+(`QARenderStart`'s 2nd arg is a dirty-rect), which is why the letterbox is covered
+with black gouraud quads rather than clipped.
+
+Still open (visual, lower priority than perf): the side panels / journal / inventory
+and full-screen menus during gameplay aren't showing in RAVE mode yet — a UI-source
+question (which buffer those elements draw into) separate from the 3D path.
+
+---
+
 ## Guardrails (do not regress these)
 
 Two hard-won facts from prior sessions — violating either wastes a hardware trip:
@@ -260,7 +316,10 @@ readback.
   RAVE presents, the CPU does only BSP visibility + polygon setup — not per-column /
   per-scanline stepping. See `[[project_renderer_decouple_branching]]`.
 
-### 5.3 Eliminate the per-frame VRAM readback + CPU composite  §4.3
+### 5.3 Eliminate the per-frame VRAM readback + CPU composite  §4.3  ✅ DONE (commit 8a8c8699)
+> Direct-to-screen: RAVE presents its own fullscreen frame and draws the UI as a GPU
+> quad — no readback, no CPU composite. The tint (1.4) is not yet re-folded into this
+> path (palette animation in direct mode is still open). See the STATUS block up top.
 - **Problem:** `RaveViewFrameEnd` reads the whole target back to RAM and converts it
   (`RAVE_VIEW.C:586-636`); `RESSCALE.C` then scales+overlays into SDL — **two full
   view passes on the CPU every frame**, purely to composite under the SDL UI.
