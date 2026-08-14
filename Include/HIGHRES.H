@@ -65,6 +65,15 @@ void HighResSetViewWindow(int x, int y, int w, int h);
 void HighResDisableViewWindow(void);
 int  HighResViewWindowEnabled(void);
 
+/* Read back the current 3D-view window rect in LOGICAL 320x200 coords (the same
+   rect last set by HighResSetViewWindow, clamped to the screen). Used by the RAVE
+   compositor to size its transparent 3D hole so it tracks the shrunk view when a
+   banner form is open. Values are only meaningful when HighResViewWindowEnabled(). */
+int  HighResViewWindowX(void);
+int  HighResViewWindowY(void);
+int  HighResViewWindowW(void);
+int  HighResViewWindowH(void);
+
 /* Where the renderer should draw: pointer to the top-left pixel of the    */
 /* 3D view inside the frame, at native (scaled) density.  The view is      */
 /* (w*scale) x (h*scale) pixels with row stride HighResFrameStride().      */

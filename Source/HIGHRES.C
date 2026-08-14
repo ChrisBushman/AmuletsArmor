@@ -115,6 +115,11 @@ void HighResSetViewWindow(int x, int y, int w, int h)
 void HighResDisableViewWindow(void)     {  G_winEnabled = 0;  }
 int HighResViewWindowEnabled(void)      {  return G_winEnabled;  }
 
+int HighResViewWindowX(void)            {  return G_winX;  }
+int HighResViewWindowY(void)            {  return G_winY;  }
+int HighResViewWindowW(void)            {  return G_winW;  }
+int HighResViewWindowH(void)            {  return G_winH;  }
+
 /*--------------------------------------------------------------------------*/
 unsigned char *HighResViewPtr(void)
 {

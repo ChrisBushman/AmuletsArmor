@@ -32,6 +32,7 @@
 #include <Quickdraw.h>
 #include <RAVE.h>
 #include "3D_VIEW.H"   /* View3dGetView() -- camera; VIEW3D_* viewport dims */
+#include "HIGHRES.H"   /* HighResViewWindow{Enabled,X,Y,W,H}() -- live view rect */
 #include "3D_IO.H"     /* G_3d{Upper,Lower,Main,Floor,Ceiling}TextureArray   */
 #include "GRAPHICS.H"  /* GrGetPalette(), T_palette                          */
 #include "COLOR.H"     /* ColorGetTintDelta() -- reapply live palette tint   */
@@ -949,6 +950,7 @@ T_void RaveViewFinish(T_void)
 static void IRaveUpdateViewTransform(void)
 {
     int dx = 0, dy = 0, dw = 0, dh = 0 ;
+    int clipLeftBase = 0 ;   /* base-coord left margin chopped by a shrunk (form) view */
 
     if (!G_raveDirectPresent)
         return ;                            /* readback path stays identity */
@@ -963,11 +965,26 @@ static void IRaveUpdateViewTransform(void)
         G_raveDstY = dy ;
         G_raveDstW = dw ;
         G_raveDstH = dh ;
+        /* Framing when a banner form shrinks the view: View3dClipCenter CENTERS the
+           visible window within the full view, so the RAVE 3D must shift LEFT by the
+           chopped left margin to show the SAME centered slice the software renderer
+           does (otherwise the hole shows the left slice of the scene). Derived purely
+           from the HighRes window -- margin = (fullBaseWidth - windowWidth)/2 in base
+           coords -- so it needs no volatile VIEW3D_CLIP_* read. 0 when not shrunk. */
+        if (HighResViewWindowEnabled()) {
+            int fullBaseW = (VIEW3D_SCALE > 0)
+                              ? (int)((int)VIEW3D_WIDTH / (int)VIEW3D_SCALE)
+                              : (int)VIEW3D_WIDTH ;
+            int winW = HighResViewWindowW() ;
+            if ((winW > 0) && (winW < fullBaseW))
+                clipLeftBase = (fullBaseW - winW) / 2 ;
+        }
         /* Map emitted VIEW3D coords into the SAME base-320x200 grid the UI texture
            uses (origin 4,3; 1 emit unit = 1 base unit), then base->device. Using
            320/200 (not logicalW/H) guarantees the 3D fills the UI's transparent
-           view hole exactly -- no black seam. */
-        G_raveViewOrgX = (float)G_raveDstX + (float)(4 * dw) / 320.0f ;
+           view hole exactly -- no black seam. The clipLeftBase shift left-aligns the
+           centered shrunk view into the (also-shrunk) transparent hole. */
+        G_raveViewOrgX = (float)G_raveDstX + (float)((4 - clipLeftBase) * dw) / 320.0f ;
         G_raveViewOrgY = (float)G_raveDstY + (float)(3 * dh) / 200.0f ;
         G_raveViewSclX = (float)dw / 320.0f ;
         G_raveViewSclY = (float)dh / 200.0f ;
@@ -1064,19 +1081,25 @@ static void IRaveUploadUI(const T_byte8 *ui8, int sw, int sh, int pitch,
     const T_byte8  *ovl ;
     T_byte8        *buf ;
     int             potW, potH, vpad, x, y ;
-    int             vx0 = 4, vy0 = 3 ;                /* VIEW3D_ORIGIN_X/Y */
-    /* The transparent 3D hole tracks the VISIBLE view width, which shrinks when a
-       banner form (inventory/journal/stats/...) opens: View3dClipCenter narrows
-       [CLIP_LEFT,CLIP_RIGHT] and the view is LEFT-ALIGNED at the origin, so the
-       window is [ORIGIN_X, ORIGIN_X + (CLIP_RIGHT-CLIP_LEFT)]. Using the full
-       VIEW3D_WIDTH here kept the hole full-width, so the form drawn on the right
-       was inside it and got keyed transparent (invisible in RAVE). No form open ->
-       CLIP span == VIEW3D_WIDTH, so this is identical to before. */
-    int             vx1 = 4 + (int)(VIEW3D_CLIP_RIGHT - VIEW3D_CLIP_LEFT) ;
+    /* The transparent 3D hole must exactly match the visible view window -- which
+       SHRINKS when a banner form (inventory/journal/stats/...) opens (View3dClipCenter
+       narrows it and draws the form beside it). The authoritative rect is the HighRes
+       view window (base 320x200 coords, clamped), set by BOTH View3dSetSize (full) and
+       View3dClipCenter (shrunk) -- unlike the raw VIEW3D_CLIP_* vars, which sit at their
+       stale init until a form is first opened (using those blacked the whole view).
+       Filled from the window below (fallback = full VIEW3D view). */
+    int             vx0 = 4, vy0 = 3 ;                /* VIEW3D_ORIGIN_X/Y (fallback) */
+    int             vx1 = 4 + (int)VIEW3D_WIDTH ;
     int             vy1 = 3 + (int)VIEW3D_HEIGHT ;
     TQAImage        image ;
     TQAError        err ;
     TQATexture     *tex = NULL ;
+
+    if (HighResViewWindowEnabled()) {
+        vx0 = HighResViewWindowX() ;   vy0 = HighResViewWindowY() ;
+        vx1 = vx0 + HighResViewWindowW() ;
+        vy1 = vy0 + HighResViewWindowH() ;
+    }
 
     if (G_raveUITex != NULL) {
         QATextureDelete(G_raveEngine, G_raveUITex) ;
