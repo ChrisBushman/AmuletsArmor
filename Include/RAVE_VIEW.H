@@ -132,6 +132,12 @@ E_Boolean RaveViewGetFrame(T_raveFrame *out) ;
 T_void RaveViewProfileCompositeBegin(void) ;
 T_void RaveViewProfileFrame(void) ;
 
+/* ALT+F8 toggles the on-screen fps/phase readout (default off). RaveViewProfileIsOn
+   lets RESSCALE gate its software-mode fps line on the same flag. No-op / FALSE on
+   non-RAVE builds. */
+E_Boolean RaveViewProfileToggle(void) ;
+E_Boolean RaveViewProfileIsOn(void) ;
+
 /* rave-7 offload: TRUE once RAVE is successfully presenting frames -- the
    caller (3D_VIEW.C) then skips the software 3D raster since the HW view is
    composited over it. FALSE until the first frame is confirmed presented, and

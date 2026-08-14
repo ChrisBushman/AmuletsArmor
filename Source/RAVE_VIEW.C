@@ -61,6 +61,7 @@ static unsigned long G_accReadback = 0, G_accComposite = 0 ;
 static unsigned long G_accUploads = 0, G_accFrames = 0 ;
 static unsigned long G_profLastReportUs = 0 ;
 static unsigned long G_profCompositeStart = 0 ;   /* set by CompositeBegin */
+static E_Boolean     G_raveProfileOn = FALSE ;    /* runtime on/off (F8); default off */
 
 /* rave-9 perf pass: the geometry/emit phase (FrameBegin->FrameEnd = BSP walk +
    RAVE emit) and the "rest" (FrameEnd->present = software UI draw + game logic),
@@ -106,12 +107,14 @@ static T_word16  G_raveFrameW     = 0 ;     /* == context width  (VIEW3D_WIDTH)*
 static T_word16  G_raveFrameH     = 0 ;     /* == context height (VIEW3D_HEIGHT)*/
 static E_Boolean G_raveFrameReady = FALSE ; /* a frame is in G_raveFrameBuf   */
 
-/* Runtime software<->RAVE switch (hotkey + resolution.ini). When FALSE the
-   whole RAVE path goes dormant -- IsActive/IsPresenting/GetFrame report off,
-   FrameBegin/End/Emit no-op -- so the software renderer draws and is shown,
-   with no rebuild. Default OFF: RAVE is opt-in via resolution.ini
-   (renderer=rave) or the in-game F12 hotkey; software is the shipping default. */
-static E_Boolean G_raveEnabled    = FALSE ;
+/* Runtime software<->RAVE switch (resolution.ini renderer=). When FALSE the whole
+   RAVE path goes dormant -- IsActive/IsPresenting/GetFrame report off,
+   FrameBegin/End/Emit no-op -- so the software renderer draws and is shown, with
+   no rebuild. Default ON now that RAVE outperforms the software renderer on
+   hardware; it falls back to software automatically if the RAVE context can't be
+   created (no HW). Force it off with renderer=software. (There is no in-game
+   toggle anymore -- ALT+F12 is the screenshot.) */
+static E_Boolean G_raveEnabled    = TRUE ;
 
 /* Per-frame suspend: the game sets this (e.g. while the escape/options menu is
    open over the full 3D view) so RAVE goes dormant and the software renderer
@@ -1295,7 +1298,7 @@ T_void RaveViewProfileFrame(void)
 {
     unsigned long now, elapsed, compositeUs ;
 
-    if (!G_raveEnabled)
+    if (!G_raveEnabled || !G_raveProfileOn)   /* F8 toggles G_raveProfileOn (default off) */
         return ;
     compositeUs = IProfNowUs() - G_profCompositeStart ;
     G_accUpload    += G_profUploadUs ;
@@ -1353,9 +1356,26 @@ T_void RaveViewProfileFrame(void)
         G_profLastReportUs = now ;
     }
 }
+
+/* ALT+F8 toggles the on-screen fps/phase readout (default off). Returns new state.
+   RaveViewProfileIsOn lets RESSCALE gate its software-mode fps line on the same
+   flag, so the counter is one feature across both renderers. */
+E_Boolean RaveViewProfileToggle(void)
+{
+    G_raveProfileOn = G_raveProfileOn ? FALSE : TRUE ;
+    G_profLastReportUs = 0 ;   /* restart the averaging window */
+    return G_raveProfileOn ;
+}
+
+E_Boolean RaveViewProfileIsOn(void)
+{
+    return G_raveProfileOn ;
+}
 #else
-T_void RaveViewProfileCompositeBegin(void) {}
-T_void RaveViewProfileFrame(void) {}
+T_void    RaveViewProfileCompositeBegin(void) {}
+T_void    RaveViewProfileFrame(void) {}
+E_Boolean RaveViewProfileToggle(void) { return FALSE ; }
+E_Boolean RaveViewProfileIsOn(void)   { return FALSE ; }
 #endif
 
 /* rave-7: hand the composited RGB555 frame (+ its dimensions) to the display
@@ -1426,7 +1446,7 @@ static T_void IRaveDrawTexturedQuad(
     float               invNH = 1.0f / normH ;
     int                 i ;
 #if RAVE_PROFILE
-    unsigned long       _tDraw = IProfNowUs() ;   /* RAVE draw = setup + submit (+ fill) */
+    unsigned long       _tDraw = G_raveProfileOn ? IProfNowUs() : 0 ; /* draw = setup+submit(+fill) */
     G_profDraws++ ;   /* one textured quad (2 tris) -- wall strip, sprite, or sky */
 #endif
     QASetPtr(G_raveContext, kQATag_Texture, tex) ;
@@ -1457,7 +1477,7 @@ static T_void IRaveDrawTexturedQuad(
     QADrawTriTexture(G_raveContext, &v[0], &v[1], &v[2], kQATriFlags_None) ;
     QADrawTriTexture(G_raveContext, &v[0], &v[2], &v[3], kQATriFlags_None) ;
 #if RAVE_PROFILE
-    G_profDrawUs += IProfNowUs() - _tDraw ;
+    if (G_raveProfileOn) G_profDrawUs += IProfNowUs() - _tDraw ;
 #endif
 }
 
@@ -1753,6 +1773,8 @@ T_void    RaveViewFrameEnd(T_void)      {}
 T_void    RaveViewFlushTextures(T_void) {}
 T_void    RaveViewProfileCompositeBegin(void) {}
 T_void    RaveViewProfileFrame(void) {}
+E_Boolean RaveViewProfileToggle(void)   { return FALSE ; }
+E_Boolean RaveViewProfileIsOn(void)     { return FALSE ; }
 E_Boolean RaveViewIsActive(T_void)      { return FALSE ; }
 E_Boolean RaveViewIsDirectPresenting(T_void) { return FALSE ; }
 T_void    RaveViewRequestShot(T_void)   {}

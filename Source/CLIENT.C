@@ -1149,38 +1149,38 @@ T_void ClientUpdate(T_void)
             }
 #endif
 
-#if defined(macintosh) && defined(AA_RENDERER_RAVE)
-            /* rave-7: F12 toggles software<->RAVE live for A/B comparison.
-               Edge-detected so one press = one toggle. */
-            {
-                static E_Boolean s_ravePrevF12 = FALSE ;
-                E_Boolean nowF12 = KeyboardGetScanCode(KEY_SCAN_CODE_F12) ;
-                if (nowF12 && !s_ravePrevF12)
-                    MessageAdd(RaveViewToggle()
-                                   ? "Renderer: RAVE (hardware)"
-                                   : "Renderer: software") ;
-                s_ravePrevF12 = nowF12 ;
-            }
-#endif
-
 #if defined(macintosh)
-            /* F8 saves a screenshot of the composited frame to AAshotNN.bmp in
-               the app folder (works for BOTH software and RAVE, so A/B frames can
-               be diffed off-device). Edge-detected: one press = one shot. */
+            /* ALT+F12 saves a screenshot to AAshotNN.bmp (works in BOTH renderers).
+               ALT-modified so it doesn't clash with the plain-F-key canned chat
+               messages. In direct-to-screen mode the SDL surface has no RAVE frame,
+               so capture RAVE's own buffer. Edge-detected: one press = one shot. */
             {
                 extern void ResScaleRequestScreenshot(void) ;
-                static E_Boolean s_prevF8 = FALSE ;
-                E_Boolean nowF8 = KeyboardGetScanCode(KEY_SCAN_CODE_F8) ;
-                if (nowF8 && !s_prevF8)  {
-                    /* rave-9: in direct-to-screen mode the SDL surface doesn't hold
-                       the RAVE frame -- capture RAVE's own buffer instead. */
+                static E_Boolean s_prevShot = FALSE ;
+                E_Boolean nowShot = (E_Boolean)(KeyboardGetScanCode(KEY_SCAN_CODE_F12) &&
+                                                KeyboardGetScanCode(KEY_SCAN_CODE_ALT)) ;
+                if (nowShot && !s_prevShot)  {
                     if (RaveViewIsDirectPresenting())
                         RaveViewRequestShot() ;
                     else
                         ResScaleRequestScreenshot() ;
                     MessageAdd("Screenshot saved (AAshotNN.bmp)") ;
                 }
-                s_prevF8 = nowF8 ;
+                s_prevShot = nowShot ;
+            }
+#endif
+
+#if defined(macintosh) && defined(AA_RENDERER_RAVE)
+            /* ALT+F8 toggles the on-screen fps/phase counter (default off).
+               Edge-detected. */
+            {
+                static E_Boolean s_prevFps = FALSE ;
+                E_Boolean nowFps = (E_Boolean)(KeyboardGetScanCode(KEY_SCAN_CODE_F8) &&
+                                               KeyboardGetScanCode(KEY_SCAN_CODE_ALT)) ;
+                if (nowFps && !s_prevFps)
+                    MessageAdd(RaveViewProfileToggle()
+                                   ? "FPS counter on" : "FPS counter off") ;
+                s_prevFps = nowFps ;
             }
 #endif
 

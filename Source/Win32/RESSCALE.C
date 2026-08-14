@@ -257,7 +257,7 @@ static void IWriteDefaultIni(void)
         "bpp=0\n"
         "detail=2\n"
         "vsync=0\n"
-        "renderer=software\n",
+        "renderer=rave\n",
         fp);
     fclose(fp);
 }
@@ -335,8 +335,9 @@ static void IReadIni(void)
         else if (ICompareKey(key, "renderer") == 0)  {
             /* rave-7: 3D renderer choice. "software" forces the CPU renderer;
                "rave"/"hardware" selects the RAVE HW backend. No-op on non-RAVE
-               builds. Unset -> software (RAVE is opt-in; see G_raveEnabled). The
-               in-game F12 hotkey toggles it live regardless. */
+               builds. Unset -> rave (the default now that RAVE outperforms
+               software; see G_raveEnabled), auto-falling-back to software if the
+               HW context can't be created. No in-game toggle anymore. */
             if (ICompareKey(value, "software") == 0)
                 RaveViewSetEnabled(FALSE);
             else if ((ICompareKey(value, "rave") == 0) ||
@@ -997,7 +998,8 @@ void ResScaleUpdate(void)
         s_lastMs = now;
         s_frames++;
         if (s_accMs >= 1000)  {
-            if ((!RaveViewIsDirectPresenting()) && (s_frames > 0))  {
+            if ((!RaveViewIsDirectPresenting()) && (s_frames > 0) &&
+                RaveViewProfileIsOn())  {   /* ALT+F8; default off */
                 char b[48];
                 unsigned long fps10 = ((unsigned long)s_frames * 10000UL) /
                                       (s_accMs ? s_accMs : 1UL);
