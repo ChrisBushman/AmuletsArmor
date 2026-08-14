@@ -192,11 +192,12 @@ INDICATOR_LIGHT(105, INDICATOR_GREEN) ;
     /* (rave-5), bracketed by FrameBegin/FrameEnd. The software raster still   */
     /* runs and is what the player sees until rave-7 presents the RAVE frame   */
     /* and skips it. FrameBegin/End are no-ops off-RAVE / when inactive.       */
-    /* Suspend RAVE while the escape menu OR a banner form is up, so the software
-       renderer draws that UI. (Banner-form-in-RAVE compositing is still pending; the
-       keying itself is fine -- the earlier "black view" was a deferred-render z bug,
-       now fixed -- but that's the next task.) */
-    RaveViewSetSuspended(EscapeMenuIsOpen() || BannerIsOpen()) ;
+    /* Suspend RAVE only for the escape menu (a partial overlay drawn over the FULL
+       view -- still needs the overlay-mask approach). Banner forms are NOT suspended:
+       they shrink the view via View3dClipCenter and draw beside it, and the RAVE UI
+       hole + framing now track that shrink (RAVE_VIEW.C), so they composite with the
+       live 3D. (The earlier black was the deferred z bug, now fixed.) */
+    RaveViewSetSuspended(EscapeMenuIsOpen()) ;
     RaveViewFrameBegin() ;
     View3dDrawView() ;
     RaveViewFrameEnd() ;
