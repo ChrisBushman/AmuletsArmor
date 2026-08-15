@@ -3070,14 +3070,21 @@ INDICATOR_LIGHT(829, INDICATOR_RED) ;
         rvTR.x = (float)sx2 ; rvTR.y = (float)scrYTopRight    / 65536.0f ;
         rvTR.z = zR ; rvTR.invW = invWR ; rvTR.u = uR ; rvTR.v = vTop ; rvTR.light = lightR ;
 
-        /* DIAGNOSTIC (ALT+F8): colour wall segments by TYPE --
-           main/window=GREEN, upper=RED, lower=BLUE. */
+        /* DIAGNOSTIC (ALT+F8): upper=RED, lower=BLUE; MAIN walls coloured by OPAQUE:
+           solid(1)=GREEN, masked(2)=MAGENTA, translucent(3)=ORANGE. Tells us why a
+           main wall renders see-through (masked mip vs translucent-over-sky vs a
+           solid that shouldn't be see-through at all). */
         if (RaveViewProfileIsOn()) {
-            RaveViewEmitFlatDebug(
-                (float)(G_wall.type == UPPER_TYPE),   /* red   = upper */
-                (float)(G_wall.type == WALL_TYPE),    /* green = main/window */
-                (float)(G_wall.type == LOWER_TYPE),   /* blue  = lower */
-                &rvTL, &rvBL, &rvBR, &rvTR) ;
+            if (G_wall.type == UPPER_TYPE)
+                RaveViewEmitFlatDebug(1.0f, 0.0f, 0.0f, &rvTL, &rvBL, &rvBR, &rvTR) ;
+            else if (G_wall.type == LOWER_TYPE)
+                RaveViewEmitFlatDebug(0.0f, 0.0f, 1.0f, &rvTL, &rvBL, &rvBR, &rvTR) ;
+            else if (G_wall.opaque == 2)
+                RaveViewEmitFlatDebug(1.0f, 0.0f, 1.0f, &rvTL, &rvBL, &rvBR, &rvTR) ; /* masked */
+            else if (G_wall.opaque == 3)
+                RaveViewEmitFlatDebug(1.0f, 0.5f, 0.0f, &rvTL, &rvBL, &rvBR, &rvTR) ; /* translucent */
+            else
+                RaveViewEmitFlatDebug(0.0f, 1.0f, 0.0f, &rvTL, &rvBL, &rvBR, &rvTR) ; /* solid */
         } else if (G_wall.p_texture != NULL) {
             /* opaque==3 = translucent (building windows etc.) -> blend at 0.5;
                opaque==1 solid stays fully opaque; opaque==2 masked -> pass masked=1
