@@ -26,6 +26,8 @@
 #include "RAVE_VIEW.H"   /* rave-5: emit wall geometry to the RAVE HW backend */
 #include "TICKER.H"
 #include "VIEW.H"
+#include "MESSAGE.H"    /* DIAGNOSTIC: ALT+F8 sector readout */
+#include <stdio.h>
 
 static T_word16 G_fromSector ;
 
@@ -1185,6 +1187,21 @@ T_void View3dSetView(
                           - (VIEW3D_HALF_WIDTH))
                            % (VIEW3D_WIDTH<<1) ;
     G_fromSector = View3dFindSectorNum(x, y) ;
+#if defined(macintosh) && defined(AA_RENDERER_RAVE)
+    /* DIAGNOSTIC (ALT+F8): print the sector the player stands in, so we can match a
+       problem spot to the map data (floor/ceil heights, ceiling texture, sky flag). */
+    if (RaveViewProfileIsOn() && (G_fromSector < G_Num3dSectors)) {
+        static T_word16 dbgN = 0 ;
+        if (((dbgN++) & 63) == 0) {
+            T_3dSector *ps = &G_3dSectorArray[G_fromSector] ;
+            char b[72] ;
+            sprintf(b, "sec%u flr=%d ceil=%d ctx=%.8s sky=%d",
+                    (unsigned)G_fromSector, (int)ps->floorHt, (int)ps->ceilingHt,
+                    ps->ceilingTx, (int)(ps->trigger & 1)) ;
+            MessageAdd((T_byte8 *)b) ;
+        }
+    }
+#endif
 }
 
 /*-------------------------------------------------------------------------*
