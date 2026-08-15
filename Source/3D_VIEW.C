@@ -3006,7 +3006,7 @@ INDICATOR_LIGHT(829, INDICATOR_RED) ;
        (not dropped) and relativeFromZ/ToZ here are always >= 10. The >0 guard
        below is therefore just a belt-and-suspenders check, never a whole-wall
        reject; no extra near-plane split is needed. */
-    if ((G_wall.p_texture != NULL) && (relativeFromZ > 0) && (relativeToZ > 0)) {
+    if ((relativeFromZ > 0) && (relativeToZ > 0)) {
         T_raveVertex rvTL, rvBL, rvBR, rvTR ;
         T_sword32    hoxL = (T_sword32)sx1 - VIEW3D_HALF_WIDTH ;
         T_sword32    hoxR = (T_sword32)sx2 - VIEW3D_HALF_WIDTH ;
@@ -3070,24 +3070,29 @@ INDICATOR_LIGHT(829, INDICATOR_RED) ;
         rvTR.x = (float)sx2 ; rvTR.y = (float)scrYTopRight    / 65536.0f ;
         rvTR.z = zR ; rvTR.invW = invWR ; rvTR.u = uR ; rvTR.v = vTop ; rvTR.light = lightR ;
 
-        /* DIAGNOSTIC (ALT+F8): colour wall segments by TYPE so the roof/window sliver
-           can be identified -- main/window=GREEN, upper=RED, lower=BLUE. If a sliver
-           takes one of these colours it's that segment poking through; if it stays
-           sky/background it's a hairline GAP between the separate segments. */
+        /* DIAGNOSTIC (ALT+F8): colour wall segments by TYPE --
+           main/window=GREEN, upper=RED, lower=BLUE. */
         if (RaveViewProfileIsOn()) {
             RaveViewEmitFlatDebug(
                 (float)(G_wall.type == UPPER_TYPE),   /* red   = upper */
                 (float)(G_wall.type == WALL_TYPE),    /* green = main/window */
                 (float)(G_wall.type == LOWER_TYPE),   /* blue  = lower */
                 &rvTL, &rvBL, &rvBR, &rvTR) ;
-        } else
-        /* opaque==3 = translucent (building windows etc.) -> blend at 0.5;
-           opaque==1 solid stays fully opaque; opaque==2 masked -> pass masked=1
-           so index 0 is the transparent cutout (grates/fences), not black. */
-        RaveViewEmitQuad(G_wall.p_texture,
-                         (G_wall.opaque == 3) ? 0.5f : 1.0f,
-                         (T_byte8)((G_wall.opaque == 2) ? 1 : 0),
-                         &rvTL, &rvBL, &rvBR, &rvTR) ;
+        } else if (G_wall.p_texture != NULL) {
+            /* opaque==3 = translucent (building windows etc.) -> blend at 0.5;
+               opaque==1 solid stays fully opaque; opaque==2 masked -> pass masked=1
+               so index 0 is the transparent cutout (grates/fences), not black. */
+            RaveViewEmitQuad(G_wall.p_texture,
+                             (G_wall.opaque == 3) ? 0.5f : 1.0f,
+                             (T_byte8)((G_wall.opaque == 2) ? 1 : 0),
+                             &rvTL, &rvBL, &rvBR, &rvTR) ;
+        } else if (G_wall.opaque) {
+            /* Missing texture ('-'/unloaded) on a SOLID wall: the software raster
+               falls back to a flat fill, so emit a flat shaded quad instead of
+               leaving the sky/background showing through the gap. */
+            float lite = (rvTL.light + rvBR.light) * 0.5f * 0.55f ;
+            RaveViewEmitFlatDebug(lite, lite, lite, &rvTL, &rvBL, &rvBR, &rvTR) ;
+        }
     }
 #endif /* macintosh && AA_RENDERER_RAVE */
 
