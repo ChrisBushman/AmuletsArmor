@@ -1895,8 +1895,14 @@ T_void RaveViewEmitFlatDebug(float r, float g, float b,
         return ;
     s[0] = tl ; s[1] = bl ; s[2] = br ; s[3] = tr ;
     for (i = 0 ; i < 4 ; i++) {
-        v[i].x    = G_raveViewOrgX + s[i]->x * G_raveViewSclX ;
-        v[i].y    = G_raveViewOrgY + s[i]->y * G_raveViewSclY ;
+        float dx = G_raveViewOrgX + s[i]->x * G_raveViewSclX ;
+        float dy = G_raveViewOrgY + s[i]->y * G_raveViewSclY ;
+        /* CLAMP to the view rect so extreme grazing coords can't be silently dropped
+           by the HW -- makes "colour present" reliably mean "was emitted" (distorted
+           at the edges is fine for a diagnostic). */
+        if (dx < G_raveClipL) dx = G_raveClipL ; if (dx > G_raveClipR) dx = G_raveClipR ;
+        if (dy < G_raveClipT) dy = G_raveClipT ; if (dy > G_raveClipB) dy = G_raveClipB ;
+        v[i].x    = dx ; v[i].y = dy ;
         v[i].z    = s[i]->z ; v[i].invW = s[i]->invW ;
         v[i].r = r ; v[i].g = g ; v[i].b = b ; v[i].a = 1.0f ;
     }
