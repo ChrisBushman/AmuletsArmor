@@ -5281,6 +5281,13 @@ DebugCheck(start < MAX_VIEW3D_WIDTH) ;
             fBR.x=sxR; fBR.y=syB; fBR.z=z; fBR.invW=invW; fBR.u=uRight; fBR.v=vRight; fBR.light=light ;
             fTR.x=sxR; fTR.y=syT; fTR.z=z; fTR.invW=invW; fTR.u=uRight; fTR.v=vRight; fTR.light=light ;
 
+            /* DIAGNOSTIC (ALT+F8): ceiling runs = CYAN, floor runs = YELLOW, so the
+               green wall poke can be seen against whatever's meant to occlude it. */
+            if (RaveViewProfileIsOn()) {
+                int isCeil = (row < VIEW3D_HALF_HEIGHT) ;
+                RaveViewEmitFlatDebug(isCeil ? 0.0f : 1.0f, 1.0f, isCeil ? 1.0f : 0.0f,
+                                      &fTL, &fBL, &fBR, &fTR) ;
+            } else
             RaveViewEmitQuad(p_texture, 1.0f, 0, &fTL, &fBL, &fBR, &fTR) ;   /* floors solid */
         }
 #endif /* macintosh && AA_RENDERER_RAVE */
