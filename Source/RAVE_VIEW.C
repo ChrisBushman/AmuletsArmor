@@ -1880,11 +1880,10 @@ T_void RaveViewEmitQuad(
     }
 }
 
-/* DIAGNOSTIC: draw one wall quad as a FLAT gouraud colour (no texture, no strips) --
-   used to colour wall segments by type (main/upper/lower) so we can see whether a
-   roof/window sliver is a segment poking through (takes its colour) or a hairline
-   GAP between segments (shows the sky/background instead). */
-T_void RaveViewEmitFlatDebug(float r, float g, float b,
+/* Draw one wall quad as a FLAT gouraud colour (no texture). Used as the software
+   raster's missing-texture fallback: a SOLID wall whose texture is '-'/unloaded
+   gets a flat shaded fill instead of leaving the sky/background showing through. */
+T_void RaveViewEmitFlat(float r, float g, float b,
            const T_raveVertex *tl, const T_raveVertex *bl,
            const T_raveVertex *br, const T_raveVertex *tr)
 {

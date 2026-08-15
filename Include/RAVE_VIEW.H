@@ -80,9 +80,10 @@ T_void RaveViewEmitSprite(
            const T_raveVertex *bottomRight,
            const T_raveVertex *topRight) ;
 
-/* DIAGNOSTIC: draw a wall quad as a flat gouraud colour (no texture) -- used to
-   colour wall segments by type to isolate the roof/window-seam artifact. */
-T_void RaveViewEmitFlatDebug(float r, float g, float b,
+/* Draw a wall quad as a flat gouraud colour (no texture) -- the missing-texture
+   fallback for a SOLID wall whose texture is '-'/unloaded (so it fills instead of
+   showing the sky/background through the gap, matching the software raster). */
+T_void RaveViewEmitFlat(float r, float g, float b,
            const T_raveVertex *tl, const T_raveVertex *bl,
            const T_raveVertex *br, const T_raveVertex *tr) ;
 

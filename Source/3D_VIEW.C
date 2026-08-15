@@ -26,8 +26,6 @@
 #include "RAVE_VIEW.H"   /* rave-5: emit wall geometry to the RAVE HW backend */
 #include "TICKER.H"
 #include "VIEW.H"
-#include "MESSAGE.H"    /* DIAGNOSTIC: ALT+F8 sector readout */
-#include <stdio.h>
 
 static T_word16 G_fromSector ;
 
@@ -1187,21 +1185,6 @@ T_void View3dSetView(
                           - (VIEW3D_HALF_WIDTH))
                            % (VIEW3D_WIDTH<<1) ;
     G_fromSector = View3dFindSectorNum(x, y) ;
-#if defined(macintosh) && defined(AA_RENDERER_RAVE)
-    /* DIAGNOSTIC (ALT+F8): print the sector the player stands in, so we can match a
-       problem spot to the map data (floor/ceil heights, ceiling texture, sky flag). */
-    if (RaveViewProfileIsOn() && (G_fromSector < G_Num3dSectors)) {
-        static T_word16 dbgN = 0 ;
-        if (((dbgN++) & 63) == 0) {
-            T_3dSector *ps = &G_3dSectorArray[G_fromSector] ;
-            char b[72] ;
-            sprintf(b, "sec%u flr=%d ceil=%d ctx=%.8s sky=%d",
-                    (unsigned)G_fromSector, (int)ps->floorHt, (int)ps->ceilingHt,
-                    ps->ceilingTx, (int)(ps->trigger & 1)) ;
-            MessageAdd((T_byte8 *)b) ;
-        }
-    }
-#endif
 }
 
 /*-------------------------------------------------------------------------*
@@ -3085,22 +3068,7 @@ INDICATOR_LIGHT(829, INDICATOR_RED) ;
         rvTR.x = (float)sx2 ; rvTR.y = (float)scrYTopRight    / 65536.0f ;
         rvTR.z = zR ; rvTR.invW = invWR ; rvTR.u = uR ; rvTR.v = vTop ; rvTR.light = lightR ;
 
-        /* DIAGNOSTIC (ALT+F8): upper=RED, lower=BLUE; MAIN walls coloured by OPAQUE:
-           solid(1)=GREEN, masked(2)=MAGENTA, translucent(3)=ORANGE. Tells us why a
-           main wall renders see-through (masked mip vs translucent-over-sky vs a
-           solid that shouldn't be see-through at all). */
-        if (RaveViewProfileIsOn()) {
-            if (G_wall.type == UPPER_TYPE)
-                RaveViewEmitFlatDebug(1.0f, 0.0f, 0.0f, &rvTL, &rvBL, &rvBR, &rvTR) ;
-            else if (G_wall.type == LOWER_TYPE)
-                RaveViewEmitFlatDebug(0.0f, 0.0f, 1.0f, &rvTL, &rvBL, &rvBR, &rvTR) ;
-            else if (G_wall.opaque == 2)
-                RaveViewEmitFlatDebug(1.0f, 0.0f, 1.0f, &rvTL, &rvBL, &rvBR, &rvTR) ; /* masked */
-            else if (G_wall.opaque == 3)
-                RaveViewEmitFlatDebug(1.0f, 0.5f, 0.0f, &rvTL, &rvBL, &rvBR, &rvTR) ; /* translucent */
-            else
-                RaveViewEmitFlatDebug(0.0f, 1.0f, 0.0f, &rvTL, &rvBL, &rvBR, &rvTR) ; /* solid */
-        } else if (G_wall.p_texture != NULL) {
+        if (G_wall.p_texture != NULL) {
             /* opaque==3 = translucent (building windows etc.) -> blend at 0.5;
                opaque==1 solid stays fully opaque; opaque==2 masked -> pass masked=1
                so index 0 is the transparent cutout (grates/fences), not black. */
@@ -3113,7 +3081,7 @@ INDICATOR_LIGHT(829, INDICATOR_RED) ;
                falls back to a flat fill, so emit a flat shaded quad instead of
                leaving the sky/background showing through the gap. */
             float lite = (rvTL.light + rvBR.light) * 0.5f * 0.55f ;
-            RaveViewEmitFlatDebug(lite, lite, lite, &rvTL, &rvBL, &rvBR, &rvTR) ;
+            RaveViewEmitFlat(lite, lite, lite, &rvTL, &rvBL, &rvBR, &rvTR) ;
         }
     }
 #endif /* macintosh && AA_RENDERER_RAVE */
@@ -5291,21 +5259,7 @@ DebugCheck(start < MAX_VIEW3D_WIDTH) ;
            Emit real ceilings normally so they occlude the backdrop; skip only F_SKY. */
         if ((strncmp(p_sector->ceilingTx, "F_SKY", 5) == 0) &&
             (row <= VIEW3D_HALF_HEIGHT))  {
-            /* sky: leave the ceiling to the backdrop quad.
-               DIAGNOSTIC (ALT+F8): draw the SKIPPED sky-ceiling run WHITE so we can
-               tell an over-skipped ceiling (shows white) from a genuinely un-emitted
-               wall (stays purple) at the missing window-top. */
-            if (RaveViewProfileIsOn()) {
-                T_raveVertex wTL, wBL, wBR, wTR ;
-                T_sword32 dAbs = (distance < 0) ? -distance : distance ;
-                float invW = IRaveInvW((float)dAbs / 65536.0f) ;
-                float z    = IRaveZ(invW) ;
-                wTL.x=(float)start; wTL.y=(float)row;     wTL.z=z; wTL.invW=invW; wTL.u=0;wTL.v=0;wTL.light=1.0f ;
-                wBL.x=(float)start; wBL.y=(float)(row+1); wBL.z=z; wBL.invW=invW; wBL.u=0;wBL.v=0;wBL.light=1.0f ;
-                wBR.x=(float)end;   wBR.y=(float)(row+1); wBR.z=z; wBR.invW=invW; wBR.u=0;wBR.v=0;wBR.light=1.0f ;
-                wTR.x=(float)end;   wTR.y=(float)row;     wTR.z=z; wTR.invW=invW; wTR.u=0;wTR.v=0;wTR.light=1.0f ;
-                RaveViewEmitFlatDebug(1.0f, 1.0f, 1.0f, &wTL, &wBL, &wBR, &wTR) ;
-            }
+            /* sky: leave the ceiling to the far backdrop quad (View3dDrawView). */
         } else
         /* rave-5b: emit this floor/ceiling run as a 1-row-tall textured quad.
            x,y are world coords (16.16) at column `start`; dx,dy step world
@@ -5333,13 +5287,6 @@ DebugCheck(start < MAX_VIEW3D_WIDTH) ;
             fBR.x=sxR; fBR.y=syB; fBR.z=z; fBR.invW=invW; fBR.u=uRight; fBR.v=vRight; fBR.light=light ;
             fTR.x=sxR; fTR.y=syT; fTR.z=z; fTR.invW=invW; fTR.u=uRight; fTR.v=vRight; fTR.light=light ;
 
-            /* DIAGNOSTIC (ALT+F8): ceiling runs = CYAN, floor runs = YELLOW, so the
-               green wall poke can be seen against whatever's meant to occlude it. */
-            if (RaveViewProfileIsOn()) {
-                int isCeil = (row < VIEW3D_HALF_HEIGHT) ;
-                RaveViewEmitFlatDebug(isCeil ? 0.0f : 1.0f, 1.0f, isCeil ? 1.0f : 0.0f,
-                                      &fTL, &fBL, &fBR, &fTR) ;
-            } else
             RaveViewEmitQuad(p_texture, 1.0f, 0, &fTL, &fBL, &fBR, &fTR) ;   /* floors solid */
         }
 #endif /* macintosh && AA_RENDERER_RAVE */
