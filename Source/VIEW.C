@@ -192,12 +192,12 @@ INDICATOR_LIGHT(105, INDICATOR_GREEN) ;
     /* (rave-5), bracketed by FrameBegin/FrameEnd. The software raster still   */
     /* runs and is what the player sees until rave-7 presents the RAVE frame   */
     /* and skips it. FrameBegin/End are no-ops off-RAVE / when inactive.       */
-    /* Suspend RAVE only for the escape menu (a partial overlay drawn over the FULL
-       view -- still needs the overlay-mask approach). Banner forms are NOT suspended:
-       they shrink the view via View3dClipCenter and draw beside it, and the RAVE UI
-       hole + framing now track that shrink (RAVE_VIEW.C), so they composite with the
-       live 3D. (The earlier black was the deferred z bug, now fixed.) */
-    RaveViewSetSuspended(EscapeMenuIsOpen()) ;
+    /* rave-10: nothing suspends RAVE anymore. The escape menu (a partial form over
+       the FULL view) now renders THROUGH RAVE like the HUD -- it is stamped into the
+       overlay mask below (the G_updateFormOverView block) so it keys OPAQUE over the
+       live 3D instead of vanishing. Banner forms shrink the view and draw beside it
+       (the RAVE UI hole tracks the shrink). No in-game UI falls back to software. */
+    RaveViewSetSuspended(FALSE) ;
     RaveViewFrameBegin() ;
     View3dDrawView() ;
     RaveViewFrameEnd() ;
@@ -228,6 +228,20 @@ INDICATOR_LIGHT(109, INDICATOR_GREEN) ;
 
     if (G_updateFormOverView)  {
         GraphicUpdateAllGraphicsForced();
+#if defined(macintosh) && defined(AA_RENDERER_RAVE)
+        /* rave-10: also stamp the form into the RAVE overlay mask so it composites
+           OPAQUELY over the live 3D (like the HUD) instead of being keyed transparent
+           and vanishing. Redraw the same graphics into the overlay screen -- it's the
+           SAME 320x200 buffer + coords the compositor keys against (View3dGetOverlayScreen
+           is the un-offset base pointer). Only the form's opaque pixels mark it, so any
+           transparent gaps in the panel still show the live world behind it. No-op /
+           skipped when RAVE isn't the active renderer (software path unchanged). */
+        if (RaveViewIsActive())  {
+            GrScreenSet((T_screen)View3dGetOverlayScreen()) ;
+            GraphicUpdateAllGraphicsForced() ;
+            GrScreenSet(GRAPHICS_ACTUAL_SCREEN) ;
+        }
+#endif
         /* TRUE-HIGHRES: a form/prompt is drawn over the view on the     */
         /* classic screen; consume the frame flag so the compositor      */
         /* presents the classic path this tick and the prompt shows      */
