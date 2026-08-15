@@ -937,13 +937,13 @@ static T_void IRaveSetRenderState(TQADrawContext *ctx)
        per-vertex w/invW that rave-5 supplies, independent of this. */
     QASetInt(ctx, kQATag_PerspectiveZ, kQAPerspectiveZ_Off) ;
 
-    /* _Mid (bilinear + nearest mip) now that textures carry a mip chain
-       (IRaveUploadTexture). The earlier _Best/_Fast decision was pre-mipmap: bilinear
-       WITHOUT mips thrashes the texture cache at minification (~4x fill) and _Fast
-       point-sampled the base level -> the grazing-wall vertical streaks. With mips a
-       minified wall samples a small coarse level, so bilinear is cheap AND
-       anti-aliased. Drop to _Fast if HW perf regresses; go _Best for trilinear. */
-    QASetInt(ctx, kQATag_TextureFilter, kQATextureFilter_Mid) ;
+    /* _Fast = nearest texel + nearest MIP. Textures carry a mip chain
+       (IRaveUploadTexture), so a minified/grazing wall point-samples a small coarse
+       level instead of aliasing the base into vertical streaks -- anti-aliased WITHOUT
+       bilinear's per-pixel 4-tap cost. (_Mid/_Best measured catastrophic on this HW:
+       DRAW ~17->150ms, ~5fps; the Rage is slow at multi-tap filtering.) _Best would
+       give trilinear if perf ever allowed. */
+    QASetInt(ctx, kQATag_TextureFilter, kQATextureFilter_Fast) ;
 
     /* Modulate the texture by the per-vertex diffuse color so rave-5's gouraud
        sector lighting darkens/brightens the texels.
