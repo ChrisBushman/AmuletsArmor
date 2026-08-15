@@ -521,11 +521,56 @@ static T_word16 INextPow2(T_word16 v) ;   /* defined below; used to POT-pad */
    and non-POT textures sample the correct sub-rect. A non-POT texture that
    *tiles* may show its transparent pad at the wrap edge, but most non-POT
    textures are non-tiling decals, so this recovers nearly all missing surfaces. */
+/* Downsample one CL8 mip level (src srcW x srcH) into dst (dstW x dstH). For each
+   dst texel, pick whichever of the 2x2 parent indices is CLOSEST (in palette RGB)
+   to the block's average colour. This keeps a real palette index (no new colours ->
+   no shade banding, and the bound colour table still applies), is cheap (4-way, not
+   a 256-entry nearest search), and -- for masked textures -- averages only the
+   opaque (non-0) texels so thin cutout detail doesn't erode to transparent. */
+static void IMipDownCL8(const T_byte8 *src, int srcW, int srcH,
+                        T_byte8 *dst, int dstW, int dstH,
+                        T_palette pal, int masked)
+{
+    int x, y ;
+    for (y = 0 ; y < dstH ; y++) {
+        for (x = 0 ; x < dstW ; x++) {
+            int sx = x * 2, sy = y * 2 ;
+            int i0 = src[(T_word32)sy * srcW + sx] ;
+            int i1 = (sx + 1 < srcW) ? src[(T_word32)sy * srcW + sx + 1] : i0 ;
+            int i2 = (sy + 1 < srcH) ? src[(T_word32)(sy + 1) * srcW + sx] : i0 ;
+            int i3 = (sx + 1 < srcW && sy + 1 < srcH)
+                       ? src[(T_word32)(sy + 1) * srcW + sx + 1] : i0 ;
+            int idx[4], k, nOp = 0, best = i0, bestd = 0x7FFFFFFF ;
+            long ar = 0, ag = 0, ab = 0 ;
+            idx[0] = i0 ; idx[1] = i1 ; idx[2] = i2 ; idx[3] = i3 ;
+            for (k = 0 ; k < 4 ; k++) {
+                int ii = idx[k] ;
+                if (masked && ii == 0) continue ;
+                ar += (pal[ii][0] & 0x3F) ;
+                ag += (pal[ii][1] & 0x3F) ;
+                ab += (pal[ii][2] & 0x3F) ;
+                nOp++ ;
+            }
+            if (nOp == 0) { dst[(T_word32)y * dstW + x] = 0 ; continue ; }
+            ar /= nOp ; ag /= nOp ; ab /= nOp ;
+            for (k = 0 ; k < 4 ; k++) {
+                int ii = idx[k], dr, dg, db, d ;
+                if (masked && ii == 0) continue ;
+                dr = (int)((pal[ii][0] & 0x3F) - ar) ;
+                dg = (int)((pal[ii][1] & 0x3F) - ag) ;
+                db = (int)((pal[ii][2] & 0x3F) - ab) ;
+                d = dr * dr + dg * dg + db * db ;
+                if (d < bestd) { bestd = d ; best = ii ; }
+            }
+            dst[(T_word32)y * dstW + x] = (T_byte8)best ;
+        }
+    }
+}
+
 static TQATexture *IRaveUploadTexture(T_byte8 *p, T_sword16 level)
 {
     T_word16        w, h, potW, potH ;
     T_byte8        *buf, *remap ;
-    TQAImage        image ;
     TQATexture     *tex = NULL ;
     T_word16        col, row ;
     TQAError        err ;
@@ -575,21 +620,42 @@ static TQATexture *IRaveUploadTexture(T_byte8 *p, T_sword16 level)
             dstCol[(T_word32)row * potW] = lut[srcCol[row]] ;
     }
 
-    image.width    = (long)potW ;
-    image.height   = (long)potH ;
-    image.rowBytes = (long)potW ;      /* 1 byte/pixel (CL8) */
-    image.pixmap   = buf ;
+    /* Build a full mip chain (level 0 = the POT buffer above, then halved down to
+       1x1) so grazing/minified walls sample a coarse level instead of aliasing into
+       vertical streaks. Default flags copy each level into engine/VRAM storage, so
+       every buffer is ours to free after. */
+    {
+        TQAImage   images[13] ;
+        T_byte8   *mipbuf[13] ;
+        T_palette  pal ;
+        int        nlev = 1, lw = potW, lh = potH, pw = potW, ph = potH ;
+        const T_byte8 *prev = buf ;
 
-    /* Default flags copy the image into engine/VRAM storage, so buf is ours
-       to free immediately after. */
+        GrGetPalette(0, 256, pal) ;
+        images[0].width = potW ; images[0].height = potH ;
+        images[0].rowBytes = potW ; images[0].pixmap = buf ;
+        mipbuf[0] = NULL ;                               /* buf freed separately */
+        while ((lw > 1 || lh > 1) && (nlev < 13)) {
+            int      nw = (lw > 1) ? (lw >> 1) : 1 ;
+            int      nh = (lh > 1) ? (lh >> 1) : 1 ;
+            T_byte8 *mb = (T_byte8 *)MemAlloc((T_word32)nw * (T_word32)nh) ;
+            if (mb == NULL) break ;
+            IMipDownCL8(prev, pw, ph, mb, nw, nh, pal, masked) ;
+            images[nlev].width = nw ; images[nlev].height = nh ;
+            images[nlev].rowBytes = nw ; images[nlev].pixmap = mb ;
+            mipbuf[nlev] = mb ;
+            prev = mb ; pw = nw ; ph = nh ; lw = nw ; lh = nh ; nlev++ ;
+        }
 #if RAVE_PROFILE
-    { unsigned long _t = IProfNowUs() ;
-      err = QATextureNew(G_raveEngine, kQATexture_None, kQAPixel_CL8, &image, &tex) ;
-      G_profUploadUs += IProfNowUs() - _t ; G_profUploads++ ; }
+        { unsigned long _t = IProfNowUs() ;
+          err = QATextureNew(G_raveEngine, kQATexture_Mipmap, kQAPixel_CL8, images, &tex) ;
+          G_profUploadUs += IProfNowUs() - _t ; G_profUploads++ ; }
 #else
-    err = QATextureNew(G_raveEngine, kQATexture_None, kQAPixel_CL8,
-                       &image, &tex) ;
+        err = QATextureNew(G_raveEngine, kQATexture_Mipmap, kQAPixel_CL8, images, &tex) ;
 #endif
+        { int mi ; for (mi = 1 ; mi < nlev ; mi++)
+            if (mipbuf[mi] != NULL) MemFree(mipbuf[mi]) ; }
+    }
     MemFree(buf) ;
 
     if (err != kQANoErr)
@@ -871,11 +937,13 @@ static T_void IRaveSetRenderState(TQADrawContext *ctx)
        per-vertex w/invW that rave-5 supplies, independent of this. */
     QASetInt(ctx, kQATag_PerspectiveZ, kQAPerspectiveZ_Off) ;
 
-    /* Fast (point) filtering: the profiler showed the frame is FILL-bound (forest
-       overdraw = ~145ms GEO), and bilinear (_Best) samples ~4x the texels per
-       pixel. _Fast is ~4x cheaper AND gives the crisp classic-pixel look. Perf
-       pass, rave-9. (Was _Best.) */
-    QASetInt(ctx, kQATag_TextureFilter, kQATextureFilter_Fast) ;
+    /* _Mid (bilinear + nearest mip) now that textures carry a mip chain
+       (IRaveUploadTexture). The earlier _Best/_Fast decision was pre-mipmap: bilinear
+       WITHOUT mips thrashes the texture cache at minification (~4x fill) and _Fast
+       point-sampled the base level -> the grazing-wall vertical streaks. With mips a
+       minified wall samples a small coarse level, so bilinear is cheap AND
+       anti-aliased. Drop to _Fast if HW perf regresses; go _Best for trilinear. */
+    QASetInt(ctx, kQATag_TextureFilter, kQATextureFilter_Mid) ;
 
     /* Modulate the texture by the per-vertex diffuse color so rave-5's gouraud
        sector lighting darkens/brightens the texels.
