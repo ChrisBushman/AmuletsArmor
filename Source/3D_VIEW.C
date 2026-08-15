@@ -3054,41 +3054,16 @@ INDICATOR_LIGHT(829, INDICATOR_RED) ;
         lightL = IRaveShadeToLight(relativeFromZ, (T_sword16)G_wall.shadeIndex) ;
         lightR = IRaveShadeToLight(relativeToZ,  (T_sword16)G_wall.shadeIndex) ;
 
-        /* Corners: screen X in 0..VIEW3D_WIDTH space; Y from the 16.16 edges. The
-           TOP corners are clamped to the per-column ceiling occlusion (G_minY) the
-           same way the software raster clamps its columns -- RAVE has no per-column
-           occlusion, so an un-clamped wall whose top projects above the roofline
-           pokes into the open sky (which the z-buffer never caps). Clamp each top
-           corner down to G_minY and slide its texel-v along the edge so the visible
-           texture is unchanged. */
-        {
-            int colL = (int)sx1, colR = (int)sx2 ;
-            int topL = (int)(scrYTopLeft  >> 16), topR = (int)(scrYTopRight  >> 16) ;
-            int botL = (int)(scrYBottomLeft>> 16), botR = (int)(scrYBottomRight>> 16) ;
-            int myL, myR ;
-            float vtL = vTop, vtR = vTop ;
-            if (colL < VIEW3D_CLIP_LEFT)  colL = VIEW3D_CLIP_LEFT ;
-            if (colL >= VIEW3D_CLIP_RIGHT) colL = VIEW3D_CLIP_RIGHT - 1 ;
-            if (colR < VIEW3D_CLIP_LEFT)  colR = VIEW3D_CLIP_LEFT ;
-            if (colR >= VIEW3D_CLIP_RIGHT) colR = VIEW3D_CLIP_RIGHT - 1 ;
-            myL = (int)G_minY[colL] ; myR = (int)G_minY[colR] ;
-            if ((topL < myL) && (botL > topL)) {
-                vtL = vTop + (vBot - vTop) * (float)(myL - topL) / (float)(botL - topL) ;
-                topL = myL ;
-            }
-            if ((topR < myR) && (botR > topR)) {
-                vtR = vTop + (vBot - vTop) * (float)(myR - topR) / (float)(botR - topR) ;
-                topR = myR ;
-            }
-            rvTL.x = (float)sx1 ; rvTL.y = (float)topL ;
-            rvTL.z = zL ; rvTL.invW = invWL ; rvTL.u = uL ; rvTL.v = vtL ; rvTL.light = lightL ;
-            rvBL.x = (float)sx1 ; rvBL.y = (float)botL ;
-            rvBL.z = zL ; rvBL.invW = invWL ; rvBL.u = uL ; rvBL.v = vBot ; rvBL.light = lightL ;
-            rvBR.x = (float)sx2 ; rvBR.y = (float)botR ;
-            rvBR.z = zR ; rvBR.invW = invWR ; rvBR.u = uR ; rvBR.v = vBot ; rvBR.light = lightR ;
-            rvTR.x = (float)sx2 ; rvTR.y = (float)topR ;
-            rvTR.z = zR ; rvTR.invW = invWR ; rvTR.u = uR ; rvTR.v = vtR ; rvTR.light = lightR ;
-        }
+        /* Corners: screen X in the 0..VIEW3D_WIDTH context space (matches the
+           RAVE context sized to the logical view); Y from the 16.16 edges. */
+        rvTL.x = (float)sx1 ; rvTL.y = (float)(scrYTopLeft    >> 16) ;
+        rvTL.z = zL ; rvTL.invW = invWL ; rvTL.u = uL ; rvTL.v = vTop ; rvTL.light = lightL ;
+        rvBL.x = (float)sx1 ; rvBL.y = (float)(scrYBottomLeft >> 16) ;
+        rvBL.z = zL ; rvBL.invW = invWL ; rvBL.u = uL ; rvBL.v = vBot ; rvBL.light = lightL ;
+        rvBR.x = (float)sx2 ; rvBR.y = (float)(scrYBottomRight>> 16) ;
+        rvBR.z = zR ; rvBR.invW = invWR ; rvBR.u = uR ; rvBR.v = vBot ; rvBR.light = lightR ;
+        rvTR.x = (float)sx2 ; rvTR.y = (float)(scrYTopRight   >> 16) ;
+        rvTR.z = zR ; rvTR.invW = invWR ; rvTR.u = uR ; rvTR.v = vTop ; rvTR.light = lightR ;
 
         /* DIAGNOSTIC (ALT+F8): colour wall segments by TYPE so the roof/window sliver
            can be identified -- main/window=GREEN, upper=RED, lower=BLUE. If a sliver
