@@ -3054,15 +3054,20 @@ INDICATOR_LIGHT(829, INDICATOR_RED) ;
         lightL = IRaveShadeToLight(relativeFromZ, (T_sword16)G_wall.shadeIndex) ;
         lightR = IRaveShadeToLight(relativeToZ,  (T_sword16)G_wall.shadeIndex) ;
 
-        /* Corners: screen X in the 0..VIEW3D_WIDTH context space (matches the
-           RAVE context sized to the logical view); Y from the 16.16 edges. */
-        rvTL.x = (float)sx1 ; rvTL.y = (float)(scrYTopLeft    >> 16) ;
+        /* Corners: screen X in the 0..VIEW3D_WIDTH context space (matches the RAVE
+           context sized to the logical view); Y from the 16.16 edges at FULL sub-pixel
+           precision (/65536, NOT >>16). Truncating the top/bottom edges to whole rows
+           made them SNAP a pixel as the view moved -- adjacent quads snapped
+           independently, opening seams and letting a wall's top poke above the
+           roofline (worse/distance-dependent because the fraction crossed a row
+           boundary). The HW rasterizes sub-pixel fine; hand it the exact edge. */
+        rvTL.x = (float)sx1 ; rvTL.y = (float)scrYTopLeft     / 65536.0f ;
         rvTL.z = zL ; rvTL.invW = invWL ; rvTL.u = uL ; rvTL.v = vTop ; rvTL.light = lightL ;
-        rvBL.x = (float)sx1 ; rvBL.y = (float)(scrYBottomLeft >> 16) ;
+        rvBL.x = (float)sx1 ; rvBL.y = (float)scrYBottomLeft  / 65536.0f ;
         rvBL.z = zL ; rvBL.invW = invWL ; rvBL.u = uL ; rvBL.v = vBot ; rvBL.light = lightL ;
-        rvBR.x = (float)sx2 ; rvBR.y = (float)(scrYBottomRight>> 16) ;
+        rvBR.x = (float)sx2 ; rvBR.y = (float)scrYBottomRight / 65536.0f ;
         rvBR.z = zR ; rvBR.invW = invWR ; rvBR.u = uR ; rvBR.v = vBot ; rvBR.light = lightR ;
-        rvTR.x = (float)sx2 ; rvTR.y = (float)(scrYTopRight   >> 16) ;
+        rvTR.x = (float)sx2 ; rvTR.y = (float)scrYTopRight    / 65536.0f ;
         rvTR.z = zR ; rvTR.invW = invWR ; rvTR.u = uR ; rvTR.v = vTop ; rvTR.light = lightR ;
 
         /* DIAGNOSTIC (ALT+F8): colour wall segments by TYPE so the roof/window sliver
