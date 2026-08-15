@@ -5281,12 +5281,18 @@ DebugCheck(start < MAX_VIEW3D_WIDTH) ;
         p_shade = IDetermineShade(distance>>16, p_sector->light>>2) ;
 
 #if defined(macintosh) && defined(AA_RENDERER_RAVE)
-        /* rave-8: sky-ceiling runs (transparentFlag = sector trigger&1, in the
-           ceiling half row<=HALF) must NOT emit the F_SKY ceiling texture -- the
-           software renderer draws the backdrop there instead, and our far-depth
-           backdrop quad (emitted in View3dDrawView) fills it. Emitting the
-           ceiling texture here would occlude that backdrop. Skip it. */
-        if (transparentFlag && (row <= VIEW3D_HALF_HEIGHT))  {
+        /* rave-8: sky-ceiling runs must NOT emit the ceiling texture -- our
+           far-depth backdrop quad (emitted in View3dDrawView) fills them.
+           BUT key this off the ACTUAL F_SKY ceiling texture, NOT trigger&1:
+           the loader sets trigger|=1 for F_SKY (3D_IO.C), yet translucent-window
+           recess sectors ALSO carry trigger&1 (their pane mechanism) while having
+           a REAL ceiling (e.g. T39). Since this block is inside `if (sizeY)` and
+           true sky is a sizeY==0 texture handled elsewhere, `transparentFlag` here
+           only ever matched those window sectors -- skipping their ceiling let the
+           sky backdrop bleed through the top of the window frame (L30 sec109 etc.).
+           Emit real ceilings normally so they occlude the backdrop; skip only F_SKY. */
+        if ((strncmp(p_sector->ceilingTx, "F_SKY", 5) == 0) &&
+            (row <= VIEW3D_HALF_HEIGHT))  {
             /* sky: leave the ceiling to the backdrop quad.
                DIAGNOSTIC (ALT+F8): draw the SKIPPED sky-ceiling run WHITE so we can
                tell an over-skipped ceiling (shows white) from a genuinely un-emitted
