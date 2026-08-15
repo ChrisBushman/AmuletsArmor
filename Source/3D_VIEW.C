@@ -5258,7 +5258,21 @@ DebugCheck(start < MAX_VIEW3D_WIDTH) ;
            backdrop quad (emitted in View3dDrawView) fills it. Emitting the
            ceiling texture here would occlude that backdrop. Skip it. */
         if (transparentFlag && (row <= VIEW3D_HALF_HEIGHT))  {
-            /* sky: leave the ceiling to the backdrop quad */
+            /* sky: leave the ceiling to the backdrop quad.
+               DIAGNOSTIC (ALT+F8): draw the SKIPPED sky-ceiling run WHITE so we can
+               tell an over-skipped ceiling (shows white) from a genuinely un-emitted
+               wall (stays purple) at the missing window-top. */
+            if (RaveViewProfileIsOn()) {
+                T_raveVertex wTL, wBL, wBR, wTR ;
+                T_sword32 dAbs = (distance < 0) ? -distance : distance ;
+                float invW = IRaveInvW((float)dAbs / 65536.0f) ;
+                float z    = IRaveZ(invW) ;
+                wTL.x=(float)start; wTL.y=(float)row;     wTL.z=z; wTL.invW=invW; wTL.u=0;wTL.v=0;wTL.light=1.0f ;
+                wBL.x=(float)start; wBL.y=(float)(row+1); wBL.z=z; wBL.invW=invW; wBL.u=0;wBL.v=0;wBL.light=1.0f ;
+                wBR.x=(float)end;   wBR.y=(float)(row+1); wBR.z=z; wBR.invW=invW; wBR.u=0;wBR.v=0;wBR.light=1.0f ;
+                wTR.x=(float)end;   wTR.y=(float)row;     wTR.z=z; wTR.invW=invW; wTR.u=0;wTR.v=0;wTR.light=1.0f ;
+                RaveViewEmitFlatDebug(1.0f, 1.0f, 1.0f, &wTL, &wBL, &wBR, &wTR) ;
+            }
         } else
         /* rave-5b: emit this floor/ceiling run as a 1-row-tall textured quad.
            x,y are world coords (16.16) at column `start`; dx,dy step world
