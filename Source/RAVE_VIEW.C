@@ -140,6 +140,12 @@ static E_Boolean G_raveDirectPresent = TRUE ;
    at native screen resolution -- sharper than the old 300x140 upscale. */
 static float G_raveViewOrgX = 0.0f, G_raveViewOrgY = 0.0f ;
 static float G_raveViewSclX = 1.0f, G_raveViewSclY = 1.0f ;
+/* Device-space bounds of the transparent view hole (== IRaveUploadUI's vx0/vy0..
+   vx1/vy1 mapped to device). All emitted 3D is clipped to this in IRaveDrawTexturedQuad
+   so a grazing wall's extreme near-end projection can't reach the HW as out-of-range
+   coordinates (which it silently DROPS -> whole side walls vanished into the sky). */
+static float G_raveClipL = 0.0f, G_raveClipR = 1.0e9f ;
+static float G_raveClipT = 0.0f, G_raveClipB = 1.0e9f ;
 
 /* rave-9: the RAVE draw context renders to the PHYSICAL display (GetMainDevice),
    but SDL's surface (G_real) is often smaller than the panel and SDL centers it
@@ -988,6 +994,23 @@ static void IRaveUpdateViewTransform(void)
         G_raveViewOrgY = (float)G_raveDstY + (float)(3 * dh) / 200.0f ;
         G_raveViewSclX = (float)dw / 320.0f ;
         G_raveViewSclY = (float)dh / 200.0f ;
+
+        /* Device bounds of the transparent view hole (same rect IRaveUploadUI keys
+           the UI texture against) -- the clip target for all 3D. */
+        {
+            int hx = 4, hy = 3, hw = (int)VIEW3D_WIDTH, hh = (int)VIEW3D_HEIGHT ;
+            if (HighResViewWindowEnabled()) {
+                hx = HighResViewWindowX() ; hy = HighResViewWindowY() ;
+                hw = HighResViewWindowW() ; hh = HighResViewWindowH() ;
+            }
+            /* Expand 2 device px so the 3D slightly OVERFILLS the hole -- no seam of
+               background at the edges. The overflow lands under the opaque UI quad /
+               letterbox (both at z=0, on top), so it's masked. */
+            G_raveClipL = (float)G_raveDstX + (float)(hx        * dw) / 320.0f - 2.0f ;
+            G_raveClipR = (float)G_raveDstX + (float)((hx + hw) * dw) / 320.0f + 2.0f ;
+            G_raveClipT = (float)G_raveDstY + (float)(hy        * dh) / 200.0f - 2.0f ;
+            G_raveClipB = (float)G_raveDstY + (float)((hy + hh) * dh) / 200.0f + 2.0f ;
+        }
     }
 }
 
@@ -1568,10 +1591,52 @@ E_Boolean RaveViewIsPresenting(T_void)
     return (G_raveFrameReady && G_raveEnabled) ? TRUE : FALSE ;
 }
 
+/* Interpolate the geometry channels of a device-space textured vertex at t in [0,1]
+   between a and b. x,y (screen), z, invW, and u/w, v/w are ALL linear in screen
+   space (PerspectiveZ is off; u/w,v/w linearize the texture), so a plain lerp gives
+   the exact value RAVE would rasterize there. Colour/kd/ks are constant per quad and
+   just copied. */
+static void IClipLerp(TQAVTexture *o, const TQAVTexture *a, const TQAVTexture *b, float t)
+{
+    *o = *a ;
+    o->x      = a->x      + t * (b->x      - a->x) ;
+    o->y      = a->y      + t * (b->y      - a->y) ;
+    o->z      = a->z      + t * (b->z      - a->z) ;
+    o->invW   = a->invW   + t * (b->invW   - a->invW) ;
+    o->uOverW = a->uOverW + t * (b->uOverW - a->uOverW) ;
+    o->vOverW = a->vOverW + t * (b->vOverW - a->vOverW) ;
+}
+
+/* Sutherland-Hodgman: clip convex polygon `in` (n verts) to one axis-aligned half
+   plane, writing survivors to `out`, returning the new count. axisY selects y (else
+   x); keepLE keeps coords <= bound (else >= bound). */
+static int IClipHalf(const TQAVTexture *in, int n, TQAVTexture *out,
+                     int axisY, float bound, int keepLE)
+{
+    int i, m = 0 ;
+    for (i = 0 ; i < n ; i++) {
+        const TQAVTexture *a = &in[i] ;
+        const TQAVTexture *b = &in[(i + 1) % n] ;
+        float av = axisY ? a->y : a->x ;
+        float bv = axisY ? b->y : b->x ;
+        int   ain = keepLE ? (av <= bound) : (av >= bound) ;
+        int   bin = keepLE ? (bv <= bound) : (bv >= bound) ;
+        if (ain)
+            out[m++] = *a ;
+        if (ain != bin) {
+            float d = bv - av ;
+            float t = (d != 0.0f) ? (bound - av) / d : 0.0f ;
+            IClipLerp(&out[m++], a, b, t) ;
+        }
+    }
+    return m ;
+}
+
 /* Core: bind an already-resolved TQATexture and draw the quad (TL,BL,BR,TR)
-   as 2 textured, gouraud-lit triangles. u,v are texel coords normalized by
-   (normW,normH) -- the *texture's* real dimensions (POT), which for a padded
-   sprite differ from its logical w x h. light -> kd_r/g/b (Modulate). */
+   as textured, gouraud-lit triangles, clipped to the view hole (G_raveClip*). u,v
+   are texel coords normalized by (normW,normH) -- the *texture's* real dimensions
+   (POT), which for a padded sprite differ from its logical w x h. light -> kd_r/g/b
+   (Modulate). */
 static T_void IRaveDrawTexturedQuad(
            TQATexture *tex, float normW, float normH, float alpha,
            const T_raveVertex *topLeft,
@@ -1613,8 +1678,30 @@ static T_void IRaveDrawTexturedQuad(
         v[i].ks_r = v[i].ks_g = v[i].ks_b = 0.0f ;
     }
 
-    QADrawTriTexture(G_raveContext, &v[0], &v[1], &v[2], kQATriFlags_None) ;
-    QADrawTriTexture(G_raveContext, &v[0], &v[2], &v[3], kQATriFlags_None) ;
+    /* Fast path: whole quad inside the view hole -> draw the two tris directly.
+       Otherwise clip to the hole (interpolating the geometry channels) and fan the
+       result -- this keeps grazing walls' extreme near-end projection from ever
+       reaching the HW as out-of-range coords, which it silently drops. */
+    if ((v[0].x >= G_raveClipL) && (v[0].x <= G_raveClipR) &&
+        (v[1].x >= G_raveClipL) && (v[1].x <= G_raveClipR) &&
+        (v[2].x >= G_raveClipL) && (v[2].x <= G_raveClipR) &&
+        (v[3].x >= G_raveClipL) && (v[3].x <= G_raveClipR) &&
+        (v[0].y >= G_raveClipT) && (v[0].y <= G_raveClipB) &&
+        (v[1].y >= G_raveClipT) && (v[1].y <= G_raveClipB) &&
+        (v[2].y >= G_raveClipT) && (v[2].y <= G_raveClipB) &&
+        (v[3].y >= G_raveClipT) && (v[3].y <= G_raveClipB)) {
+        QADrawTriTexture(G_raveContext, &v[0], &v[1], &v[2], kQATriFlags_None) ;
+        QADrawTriTexture(G_raveContext, &v[0], &v[2], &v[3], kQATriFlags_None) ;
+    } else {
+        TQAVTexture pa[10], pb[10] ;
+        int         n ;
+        n = IClipHalf(v,  4, pa, 0, G_raveClipL, 0) ;   /* x >= L */
+        n = IClipHalf(pa, n, pb, 0, G_raveClipR, 1) ;   /* x <= R */
+        n = IClipHalf(pb, n, pa, 1, G_raveClipT, 0) ;   /* y >= T */
+        n = IClipHalf(pa, n, pb, 1, G_raveClipB, 1) ;   /* y <= B */
+        for (i = 1 ; i + 1 < n ; i++)                   /* fan from pb[0] */
+            QADrawTriTexture(G_raveContext, &pb[0], &pb[i], &pb[i + 1], kQATriFlags_None) ;
+    }
 #if RAVE_PROFILE
     if (G_raveProfileOn) G_profDrawUs += IProfNowUs() - _tDraw ;
 #endif
@@ -1673,27 +1760,6 @@ T_void RaveViewEmitQuad(
         return ;
     if ((p_texture == NULL) || (p_texture == G_textureNone + 4))
         return ;                        /* untextured -> skip */
-
-    /* DIAGNOSTIC (ALT+F8): draw every wall as a flat bright-green quad -- same
-       corners, no texture, no shade strips. Isolates the missing-grazing-wall bug:
-       if the side walls show GREEN, the geometry/emit is fine and the cause is the
-       texture/strip/cache path; if they stay SKY, the hardware is dropping the
-       extreme-coordinate triangle. Remove once the cause is known. */
-    if (G_raveProfileOn) {
-        TQAVGouraud        gv[4] ;
-        const T_raveVertex *sc[4] ;
-        int                 k ;
-        sc[0] = topLeft ; sc[1] = bottomLeft ; sc[2] = bottomRight ; sc[3] = topRight ;
-        for (k = 0 ; k < 4 ; k++) {
-            gv[k].x    = G_raveViewOrgX + sc[k]->x * G_raveViewSclX ;
-            gv[k].y    = G_raveViewOrgY + sc[k]->y * G_raveViewSclY ;
-            gv[k].z    = sc[k]->z ; gv[k].invW = sc[k]->invW ;
-            gv[k].r = 0.0f ; gv[k].g = 1.0f ; gv[k].b = 0.0f ; gv[k].a = 1.0f ;
-        }
-        QADrawTriGouraud(G_raveContext, &gv[0], &gv[1], &gv[2], kQATriFlags_None) ;
-        QADrawTriGouraud(G_raveContext, &gv[0], &gv[2], &gv[3], kQATriFlags_None) ;
-        return ;
-    }
 
 #if RAVE_PROFILE
     G_profQuads++ ;   /* one wall/floor emit (may split into strips below) */
