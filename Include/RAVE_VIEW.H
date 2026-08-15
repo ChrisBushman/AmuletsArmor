@@ -80,6 +80,12 @@ T_void RaveViewEmitSprite(
            const T_raveVertex *bottomRight,
            const T_raveVertex *topRight) ;
 
+/* DIAGNOSTIC: draw a wall quad as a flat gouraud colour (no texture) -- used to
+   colour wall segments by type to isolate the roof/window-seam artifact. */
+T_void RaveViewEmitFlatDebug(float r, float g, float b,
+           const T_raveVertex *tl, const T_raveVertex *bl,
+           const T_raveVertex *br, const T_raveVertex *tr) ;
+
 /* rave-8: sky backdrop quad. raw is a row-major 8-bit panorama (stride w),
    fully opaque; u,v are texel coords into it. Emit at far depth as the sky
    background (walls/ceilings occlude it). No-op off-RAVE. */

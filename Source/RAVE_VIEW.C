@@ -1880,6 +1880,30 @@ T_void RaveViewEmitQuad(
     }
 }
 
+/* DIAGNOSTIC: draw one wall quad as a FLAT gouraud colour (no texture, no strips) --
+   used to colour wall segments by type (main/upper/lower) so we can see whether a
+   roof/window sliver is a segment poking through (takes its colour) or a hairline
+   GAP between segments (shows the sky/background instead). */
+T_void RaveViewEmitFlatDebug(float r, float g, float b,
+           const T_raveVertex *tl, const T_raveVertex *bl,
+           const T_raveVertex *br, const T_raveVertex *tr)
+{
+    TQAVGouraud         v[4] ;
+    const T_raveVertex *s[4] ;
+    int                 i ;
+    if (!RaveViewIsActive())
+        return ;
+    s[0] = tl ; s[1] = bl ; s[2] = br ; s[3] = tr ;
+    for (i = 0 ; i < 4 ; i++) {
+        v[i].x    = G_raveViewOrgX + s[i]->x * G_raveViewSclX ;
+        v[i].y    = G_raveViewOrgY + s[i]->y * G_raveViewSclY ;
+        v[i].z    = s[i]->z ; v[i].invW = s[i]->invW ;
+        v[i].r = r ; v[i].g = g ; v[i].b = b ; v[i].a = 1.0f ;
+    }
+    QADrawTriGouraud(G_raveContext, &v[0], &v[1], &v[2], kQATriFlags_None) ;
+    QADrawTriGouraud(G_raveContext, &v[0], &v[2], &v[3], kQATriFlags_None) ;
+}
+
 /* Flat row-major 8-bit raster (the sky backdrop) -> POT ARGB16, fully OPAQUE
    (index 0 is a real sky color here, not transparent). Cached by pointer. */
 static TQATexture *IRaveUploadFlat(T_byte8 *raw, T_word16 w, T_word16 h)

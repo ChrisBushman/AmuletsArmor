@@ -3065,6 +3065,17 @@ INDICATOR_LIGHT(829, INDICATOR_RED) ;
         rvTR.x = (float)sx2 ; rvTR.y = (float)(scrYTopRight   >> 16) ;
         rvTR.z = zR ; rvTR.invW = invWR ; rvTR.u = uR ; rvTR.v = vTop ; rvTR.light = lightR ;
 
+        /* DIAGNOSTIC (ALT+F8): colour wall segments by TYPE so the roof/window sliver
+           can be identified -- main/window=GREEN, upper=RED, lower=BLUE. If a sliver
+           takes one of these colours it's that segment poking through; if it stays
+           sky/background it's a hairline GAP between the separate segments. */
+        if (RaveViewProfileIsOn()) {
+            RaveViewEmitFlatDebug(
+                (float)(G_wall.type == UPPER_TYPE),   /* red   = upper */
+                (float)(G_wall.type == WALL_TYPE),    /* green = main/window */
+                (float)(G_wall.type == LOWER_TYPE),   /* blue  = lower */
+                &rvTL, &rvBL, &rvBR, &rvTR) ;
+        } else
         /* opaque==3 = translucent (building windows etc.) -> blend at 0.5;
            opaque==1 solid stays fully opaque; opaque==2 masked -> pass masked=1
            so index 0 is the transparent cutout (grates/fences), not black. */
