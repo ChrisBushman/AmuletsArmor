@@ -1604,25 +1604,32 @@ INDICATOR_LIGHT(114, INDICATOR_GREEN) ;
            depth (z~1) so walls/ceilings occlude it; it shows only where a sky
            ceiling leaves a gap. Indoor maps have G_backdrop==NULL -> skipped. */
         if ((G_backdrop != NULL) && (VIEW3D_WIDTH > 0)) {
-            /* Cover the WHOLE ceiling/sky region [0,bdH) so the sky never goes
-               black when pitched. Mirror the software backdrop sampling
-               (IDrawFloorRun): content row = clamp(row - G_alpha, 0, bdH-1), so
-               the top/bottom cloud rows just repeat past the panorama. The flat is
-               POT-padded and (like sprites) BOTTOM-aligned, so with RAVE's V-up
-               sampling a content row cr sits at texel v = bdH - cr (v=[0,bdH],
-               RaveViewEmitSky normalizes by INextPow2(bdH)). Emit up to 3 vertical
-               bands per horizontal segment: top clamp (cr=0, v=bdH), the linear
-               panorama, bottom clamp (cr=bdH-1, v=1). Two horizontal segments
-               handle the panorama wrap. */
-            T_sword32 bdW  = (T_sword32)VIEW3D_WIDTH << 1 ;
-            T_sword32 bdH  = VIEW3D_HALF_HEIGHT ;
-            T_sword32 off  = G_backdropOffset ;
-            T_sword32 G    = G_alpha ;
-            float     zf   = 0.9999f, iw = 0.0001f ;
-            T_sword32 seg1, pt, pb, s ;
+            /* Sky covers the ceiling region, screen rows [0,scrH). scrH follows
+               pitch (VIEW3D_HALF_HEIGHT = EVEN_HALF + G_alpha) so looking up shows
+               more sky. The TEXTURE height must NOT follow pitch, though: the
+               backdrop content is always rows [0,EVEN_HALF] (the horizon lands at
+               content row EVEN_HALF for any pitch, since content(row)=row-G_alpha
+               and the horizon sits at screen row scrH => max content = EVEN_HALF-1).
+               RaveViewEmitSky normalizes v by INextPow2(bdTexH); if bdTexH tracked
+               the pitch-varying VIEW3D_HALF_HEIGHT, that divisor would cross POT
+               boundaries (64->128->256) as you pitch and the whole sky would SNAP
+               to a new position -- the "jumps at particular vertical angles" bug.
+               So bdTexH is FIXED at EVEN_HALF; only scrH follows pitch.
+               Content row cr maps (bottom-aligned, RAVE samples V upward, matching
+               IRaveUploadFlat) to v = (bdTexH-1) - cr, with cr = row - G_alpha:
+               screen rows above the panorama (cr<0) repeat the top cloud row; the
+               panorama reaches the horizon (v=0) exactly at scrH, so no bottom band
+               is needed. Two horizontal segments handle the panorama's wrap. */
+            T_sword32 bdW    = (T_sword32)VIEW3D_WIDTH << 1 ;
+            T_sword32 bdTexH = VIEW3D_EVEN_HALF_HEIGHT ;   /* FIXED (pitch-invariant) */
+            T_sword32 scrH   = VIEW3D_HALF_HEIGHT ;        /* screen coverage, follows pitch */
+            T_sword32 off    = G_backdropOffset ;
+            T_sword32 G      = G_alpha ;
+            float     zf     = 0.9999f, iw = 0.0001f ;
+            T_sword32 seg1, pt, s ;
             T_sword32 segX0[2], segX1[2], segU0[2], segU1[2] ;
             int       nseg ;
-            float     vTopClamp, vBotClamp ;
+            float     vTopClamp = (float)(bdTexH - 1) ;    /* cr=0 -> top cloud row */
 
             if (off < 0)   off = 0 ;
             if (off > bdW) off = bdW ;
@@ -1636,12 +1643,7 @@ INDICATOR_LIGHT(114, INDICATOR_GREEN) ;
                 nseg = 2 ;
             }
 
-            pt = G ;        if (pt < 0) pt = 0 ; if (pt > bdH) pt = bdH ;   /* panorama top row  */
-            pb = G + bdH ;  if (pb < 0) pb = 0 ; if (pb > bdH) pb = bdH ;   /* panorama bottom   */
-            vTopClamp = (float)(bdH - 1) ;               /* cr=0      -> top cloud row (v=bdH-1; */
-            vBotClamp = 0.0f ;                           /* cr=bdH-1  -> horizon row  (v=0). Map */
-                                                         /* content over v in [0,bdH-1]: v=bdH is */
-                                                         /* 1 texel into the transparent POT pad. */
+            pt = G ; if (pt < 0) pt = 0 ; if (pt > scrH) pt = scrH ;   /* top-clamp height */
 
             for (s = 0 ; s < nseg ; s++) {
                 float x0 = (float)segX0[s], x1 = (float)segX1[s] ;
@@ -1653,23 +1655,19 @@ INDICATOR_LIGHT(114, INDICATOR_GREEN) ;
                 a.x=x0; b.x=x0; c.x=x1; d.x=x1 ;
                 a.u=u0; b.u=u0; c.u=u1; d.u=u1 ;
 
-                if (pt > 0) {                         /* top clamp band [0,pt) */
+                if (pt > 0) {                         /* top clamp band [0,pt): top cloud row */
                     a.y=0.0f; d.y=0.0f; b.y=(float)pt; c.y=(float)pt ;
                     a.v=vTopClamp; b.v=vTopClamp; c.v=vTopClamp; d.v=vTopClamp ;
-                    RaveViewEmitSky(G_backdrop,(T_word16)bdW,(T_word16)bdH,&a,&b,&c,&d) ;
+                    RaveViewEmitSky(G_backdrop,(T_word16)bdW,(T_word16)bdTexH,&a,&b,&c,&d) ;
                 }
-                if (pb > pt) {                        /* panorama band [pt,pb) */
-                    float vT = (float)((bdH - 1) - (pt - G)) ;
-                    float vB = (float)((bdH - 1) - (pb - G)) ;
-                    if (vB < vBotClamp) vB = vBotClamp ;   /* don't sample past the horizon row */
-                    a.y=(float)pt; d.y=(float)pt; b.y=(float)pb; c.y=(float)pb ;
+                if (scrH > pt) {                      /* panorama band [pt,scrH) */
+                    float vT = (float)(bdTexH - 1) - (float)(pt   - G) ;
+                    float vB = (float)(bdTexH - 1) - (float)(scrH - G) ;
+                    if (vB < 0.0f) vB = 0.0f ;                              /* horizon row */
+                    if (vT > (float)(bdTexH - 1)) vT = (float)(bdTexH - 1) ;/* top cloud   */
+                    a.y=(float)pt; d.y=(float)pt; b.y=(float)scrH; c.y=(float)scrH ;
                     a.v=vT; d.v=vT; b.v=vB; c.v=vB ;
-                    RaveViewEmitSky(G_backdrop,(T_word16)bdW,(T_word16)bdH,&a,&b,&c,&d) ;
-                }
-                if (pb < bdH) {                       /* bottom clamp band [pb,bdH) */
-                    a.y=(float)pb; d.y=(float)pb; b.y=(float)bdH; c.y=(float)bdH ;
-                    a.v=vBotClamp; b.v=vBotClamp; c.v=vBotClamp; d.v=vBotClamp ;
-                    RaveViewEmitSky(G_backdrop,(T_word16)bdW,(T_word16)bdH,&a,&b,&c,&d) ;
+                    RaveViewEmitSky(G_backdrop,(T_word16)bdW,(T_word16)bdTexH,&a,&b,&c,&d) ;
                 }
             }
         }
