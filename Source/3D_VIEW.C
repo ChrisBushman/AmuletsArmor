@@ -2872,11 +2872,18 @@ static float IRaveInvW(float depth)
    the letterbox bars. Reserving [0, RAVE_ZGEOMMIN) for the overlay fixes that. The
    lost near sliver is empty (nothing is closer than ZMIN). */
 #define RAVE_ZGEOMMIN (1.0f/32.0f)
+/* Keep ALL geometry clearly NEARER than the sky backdrop (emitted at z=0.9999,
+   RAVE_VIEW.C). Far walls otherwise reach ~0.999 -- only ~0.0009 under the sky,
+   below the z-buffer's precision that near 1.0 -- so the sky z-fought through far
+   roofs and window tops (thin slivers, worse with distance). Scale the whole
+   geometry z range down by RAVE_ZGEOMMAX to open a clear gap under the sky; a
+   uniform scale keeps far walls separated from EACH OTHER (no new fighting). */
+#define RAVE_ZGEOMMAX 0.98f
 static float IRaveZ(float invW)
 {
-    float z = 1.0f - invW * RAVE_ZNEAR ;
+    float z = (1.0f - invW * RAVE_ZNEAR) * RAVE_ZGEOMMAX ;
     if (z < RAVE_ZGEOMMIN) z = RAVE_ZGEOMMIN ;
-    if (z > 1.0f) z = 1.0f ;
+    if (z > RAVE_ZGEOMMAX) z = RAVE_ZGEOMMAX ;
     return z ;
 }
 #endif /* macintosh && AA_RENDERER_RAVE */
