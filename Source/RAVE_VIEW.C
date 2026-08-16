@@ -369,6 +369,21 @@ T_void RaveViewInit(T_void)
                            G_raveEngine,
                            kQAContext_DoubleBuffer | kQAContext_DeepZ,
                            &G_raveContext) ;
+    /* DIAGNOSTIC (black-screen-at-high-detail): log the requested context size +
+       QADrawContextNew result to rave_init.log in the app folder. If err!=0 here the
+       code falls back to software (should NOT be a black screen); if err==0 but the
+       screen is black, the ATI accepted an oversized context it can't actually render
+       (VRAM). Readable off the USB even when the screen is black. */
+    { FILE *lg = fopen("rave_init.log", "a") ;
+      if (lg != NULL) {
+          fprintf(lg, "RAVE ctx req=%ldx%ld direct=%d view=%dx%d scale=%d off=%d,%d err=%ld ok=%d\n",
+                  (long)w, (long)h, (int)G_raveDirectPresent,
+                  (int)VIEW3D_WIDTH, (int)VIEW3D_HEIGHT, (int)VIEW3D_SCALE,
+                  (int)G_raveScrOffX, (int)G_raveScrOffY,
+                  (long)err, (int)(err == kQANoErr)) ;
+          fclose(lg) ;
+      }
+    }
     if (err != kQANoErr) {
         G_raveContext = NULL ;          /* fall back to software */
         if (G_raveClipRgn != NULL) {
@@ -1552,33 +1567,15 @@ T_void RaveViewProfileFrame(void)
     }
     elapsed = now - G_profLastReportUs ;    /* unsigned, wrap-safe */
     if ((elapsed >= 1000000UL) && (G_accFrames > 0)) {
-        char          buf[128] ;
+        char          buf[48] ;
         unsigned long f  = G_accFrames ;
-        unsigned long up = (G_accUpload    / f) / 100UL ;   /* tenths of a ms */
-        unsigned long rn = (G_accRender    / f) / 100UL ;
-        unsigned long rd = (G_accReadback  / f) / 100UL ;
-        unsigned long cp = (G_accComposite / f) / 100UL ;
-        unsigned long nu = G_accUploads    / f ;            /* uploads / frame */
         unsigned long fp = (f * 10000000UL) / (elapsed ? elapsed : 1UL) ; /* fps*10 */
-        {   /* line 2: split GEO into RAVE draw (setup+submit+fill) vs the software
-               geometry WALK (geo - draw), plus rest and draw count. */
-            unsigned long ge = (G_accGeo  / f) / 100UL ;   /* tenths of a ms */
-            unsigned long dw = (G_accDraw / f) / 100UL ;
-            unsigned long wk = (G_accGeo > G_accDraw)
-                             ? (((G_accGeo - G_accDraw) / f) / 100UL) : 0UL ;
-            unsigned long re = (G_accRest / f) / 100UL ;
-            char buf2[128] ;
-            sprintf(buf,
-                "RAVE ms up=%lu.%lu/%lu rn=%lu.%lu rd=%lu.%lu cp=%lu.%lu fps=%lu.%lu",
-                up/10, up%10, nu, rn/10, rn%10, rd/10, rd%10, cp/10, cp%10, fp/10, fp%10) ;
-            MessageAdd((T_byte8 *)buf) ;
-            sprintf(buf2,
-                "RAVE geo=%lu.%lu draw=%lu.%lu walk=%lu.%lu rest=%lu.%lu dr=%lu cs=%luk",
-                ge/10, ge%10, dw/10, dw%10, wk/10, wk%10, re/10, re%10,
-                (unsigned long)(G_accDraws / f),
-                (unsigned long)((G_accCacheScans / f) / 1000UL)) ;
-            MessageAdd((T_byte8 *)buf2) ;
-        }
+        /* Parity with the software counter's "SW fps=X.Y" (RESSCALE.C) -- just the
+           frame rate, no per-phase diagnostics. (The upload/render/composite
+           accumulators still roll below in case detailed profiling is wanted again,
+           but they're no longer printed.) */
+        sprintf(buf, "RAVE fps=%lu.%lu", fp/10, fp%10) ;
+        MessageAdd((T_byte8 *)buf) ;
         G_accUpload = G_accRender = G_accReadback = G_accComposite = 0 ;
         G_accUploads = G_accFrames = 0 ;
         G_accGeo = G_accRest = G_accDraw = 0 ;
