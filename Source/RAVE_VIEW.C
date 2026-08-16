@@ -2151,12 +2151,13 @@ T_void    RaveViewSetSuspended(E_Boolean s) { (void)s ; }
 T_void RaveViewEmitQuad(
            T_byte8 *p_texture,
            float alpha,
+           T_byte8 masked,
            const T_raveVertex *topLeft,
            const T_raveVertex *bottomLeft,
            const T_raveVertex *bottomRight,
            const T_raveVertex *topRight)
 {
-    (void)p_texture ; (void)alpha ; (void)topLeft ; (void)bottomLeft ;
+    (void)p_texture ; (void)alpha ; (void)masked ; (void)topLeft ; (void)bottomLeft ;
     (void)bottomRight ; (void)topRight ;
 }
 
