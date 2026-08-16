@@ -383,6 +383,7 @@
     <ClCompile Include="..\..\..\..\Source\3D_GEO.C" />
     <ClCompile Include="..\..\..\..\Source\3D_IO.C" />
     <ClCompile Include="..\..\..\..\Source\3D_TRIG.C" />
+    <ClCompile Include="..\..\..\..\Source\RAVE_VIEW.C" />
     <ClCompile Include="..\..\..\..\Source\3D_VIEW.C">
       <Optimization Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">MaxSpeed</Optimization>
       <Optimization Condition="'$(Configuration)|$(Platform)'=='Debug Multi|Win32'">MaxSpeed</Optimization>

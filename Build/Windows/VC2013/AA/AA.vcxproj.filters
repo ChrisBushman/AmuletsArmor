@@ -41,6 +41,9 @@
     <ClCompile Include="..\..\..\..\Source\3D_TRIG.C">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\..\..\Source\RAVE_VIEW.C">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\..\..\Source\3D_VIEW.C">
       <Filter>Source Files</Filter>
     </ClCompile>
