@@ -361,36 +361,60 @@ T_void RaveViewInit(T_void)
     G_raveClip.clipType      = kQAClipRgn ;
     G_raveClip.clip.clipRgn  = G_raveClipRgn ;
 
-    /* Double-buffered + Z-buffered: AA's world is a full 3D portal scene, so
-       we want hidden-surface removal; the ATI engine accelerates ZSort. */
-    err = QADrawContextNew(&G_raveDevice,
-                           &rect,
-                           &G_raveClip,
-                           G_raveEngine,
-                           kQAContext_DoubleBuffer | kQAContext_DeepZ,
-                           &G_raveContext) ;
-    /* DIAGNOSTIC (black-screen-at-high-detail): log the requested context size +
-       QADrawContextNew result to rave_init.log in the app folder. If err!=0 here the
-       code falls back to software (should NOT be a black screen); if err==0 but the
-       screen is black, the ATI accepted an oversized context it can't actually render
-       (VRAM). Readable off the USB even when the screen is black. */
-    { FILE *lg = fopen("rave_init.log", "a") ;
-      if (lg != NULL) {
-          fprintf(lg, "RAVE ctx req=%ldx%ld direct=%d view=%dx%d scale=%d off=%d,%d err=%ld ok=%d\n",
-                  (long)w, (long)h, (int)G_raveDirectPresent,
-                  (int)VIEW3D_WIDTH, (int)VIEW3D_HEIGHT, (int)VIEW3D_SCALE,
-                  (int)G_raveScrOffX, (int)G_raveScrOffY,
-                  (long)err, (int)(err == kQANoErr)) ;
-          fclose(lg) ;
-      }
-    }
-    if (err != kQANoErr) {
-        G_raveContext = NULL ;          /* fall back to software */
-        if (G_raveClipRgn != NULL) {
-            DisposeRgn(G_raveClipRgn) ;
-            G_raveClipRgn = NULL ;
+    /* VRAM-adaptive context (fixes garbage@800x600 / black@1024x768 on the Rage).
+       The ATI Rage LT Pro reports only ~5-6MB total VRAM, and a double-buffered + 32-bit
+       deep-Z context at high detail consumes almost all of it, leaving too little for the
+       texture pool -> starved uploads render as garbage or black, even the 2D menus
+       (which upload the UI frame as a texture). QADrawContextNew "succeeds" (err=0)
+       regardless, so instead probe the LEFTOVER texture VRAM (kQAGestalt_TextureMemory)
+       after creating each context and adapt:
+         (0) deep-Z (best precision) if it leaves >= minTexMem, else
+         (1) 16-bit Z (saves w*h*2) if THAT leaves >= minTexMem, else
+             tear down + fall back to software (a clean SW frame beats a black one).
+       minTexMem from measurement: 640x480 works with 3235k free, 800x600 garbled with
+       2185k -> the game needs ~2.5-3MB of texture VRAM. */
+    {
+        const long    minTexMem = 2800L * 1024L ;
+        unsigned long tryFlags[2] ;
+        int           t ;
+        char          engName[64] ; long nameLen = 0 ;
+        FILE         *lg = fopen("rave_init.log", "a") ;
+        engName[0] = '\0' ;
+        if ((G_raveEngine != NULL)
+            && (QAEngineGestalt(G_raveEngine, kQAGestalt_ASCIINameLength, &nameLen) == kQANoErr)
+            && (nameLen > 0) && (nameLen < 63)
+            && (QAEngineGestalt(G_raveEngine, kQAGestalt_ASCIIName, engName) == kQANoErr))
+            engName[nameLen] = '\0' ;
+
+        tryFlags[0] = (unsigned long)(kQAContext_DoubleBuffer | kQAContext_DeepZ) ;
+        tryFlags[1] = (unsigned long)(kQAContext_DoubleBuffer) ;   /* 16-bit Z */
+        G_raveContext = NULL ;
+        for (t = 0 ; t < 2 ; t++) {
+            long texMem = 0 ;
+            err = QADrawContextNew(&G_raveDevice, &rect, &G_raveClip, G_raveEngine,
+                                   tryFlags[t], &G_raveContext) ;
+            if ((err == kQANoErr) && (G_raveContext != NULL))
+                QAEngineGestalt(G_raveEngine, kQAGestalt_TextureMemory, &texMem) ;
+            if (lg != NULL)
+                fprintf(lg, "RAVE ctx req=%ldx%ld deepZ=%d view=%dx%d scale=%d err=%ld ok=%d | eng=\"%s\" texMem=%ldk need>=%ldk %s\n",
+                        (long)w, (long)h, (int)(t == 0),
+                        (int)VIEW3D_WIDTH, (int)VIEW3D_HEIGHT, (int)VIEW3D_SCALE,
+                        (long)err, (int)((err == kQANoErr) && (G_raveContext != NULL)),
+                        engName, texMem/1024L, minTexMem/1024L,
+                        (((err == kQANoErr) && (G_raveContext != NULL) && (texMem >= minTexMem))
+                            ? "ACCEPT" : "reject")) ;
+            if ((err == kQANoErr) && (G_raveContext != NULL) && (texMem >= minTexMem))
+                break ;                          /* enough texture VRAM -> keep this context */
+            if (G_raveContext != NULL) {
+                QADrawContextDelete(G_raveContext) ;
+                G_raveContext = NULL ;
+            }
         }
-        return ;
+        if (lg != NULL) fclose(lg) ;
+        if (G_raveContext == NULL) {             /* no config left enough VRAM -> software */
+            if (G_raveClipRgn != NULL) { DisposeRgn(G_raveClipRgn) ; G_raveClipRgn = NULL ; }
+            return ;
+        }
     }
 
     /* rave-7: readback buffer (RGB555) sized to the context -- only the readback
