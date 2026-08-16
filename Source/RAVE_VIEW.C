@@ -1075,13 +1075,23 @@ static void IRaveUpdateViewTransform(void)
            shrunk view into the (also-shrunk) transparent hole. */
         G_raveViewOrgX = (float)G_raveDstX + (float)((4 - clipLeftBase) * dw) / 320.0f ;
         G_raveViewOrgY = (float)G_raveDstY + (float)(3 * dh) / 200.0f ;
-        G_raveViewSclX = (float)dw / 320.0f ;
-        G_raveViewSclY = (float)dh / 200.0f ;
+        /* SCALE fix (detail > 1): emitted VIEW3D coords span 0..VIEW3D_WIDTH =
+           320*VIEW3D_SCALE (the 3D is rendered VIEW3D_SCALE times denser than the base
+           320x200 grid at higher detail). Divide the base->device scale by VIEW3D_SCALE
+           so 1 emit unit -> 1/SCALE base units and the 3D fills the hole at ANY detail.
+           Without this the 3D drew SCALE x too big -- garbled at detail 2, off-screen
+           (black) at detail 3. Origin stays base-coord (unaffected by scale). */
+        {
+            float sclDiv = (VIEW3D_SCALE > 0) ? (float)VIEW3D_SCALE : 1.0f ;
+            G_raveViewSclX = (float)dw / (320.0f * sclDiv) ;
+            G_raveViewSclY = (float)dh / (200.0f * sclDiv) ;
+        }
 
         /* Device bounds of the transparent view hole (same rect IRaveUploadUI keys
            the UI texture against) -- the clip target for all 3D. */
         {
-            int hx = 4, hy = 3, hw = (int)VIEW3D_WIDTH, hh = (int)VIEW3D_HEIGHT ;
+            int sc = (VIEW3D_SCALE > 0) ? (int)VIEW3D_SCALE : 1 ;   /* emit->base ÷SCALE */
+            int hx = 4, hy = 3, hw = (int)VIEW3D_WIDTH / sc, hh = (int)VIEW3D_HEIGHT / sc ;
             if (HighResViewWindowEnabled()) {
                 hx = HighResViewWindowX() ; hy = HighResViewWindowY() ;
                 hw = HighResViewWindowW() ; hh = HighResViewWindowH() ;
@@ -1187,9 +1197,10 @@ static void IRaveUploadUI(const T_byte8 *ui8, int sw, int sh, int pitch,
     const T_byte8  *ovl ;
     T_byte8        *buf ;
     int             potW, potH, vpad, x, y ;
+    int             sc  = (VIEW3D_SCALE > 0) ? (int)VIEW3D_SCALE : 1 ;  /* emit->base ÷SCALE */
     int             vx0 = 4, vy0 = 3 ;                /* VIEW3D_ORIGIN_X/Y (fallback) */
-    int             vx1 = 4 + (int)VIEW3D_WIDTH ;
-    int             vy1 = 3 + (int)VIEW3D_HEIGHT ;
+    int             vx1 = 4 + (int)VIEW3D_WIDTH / sc ;/* base coords (the UI is base 320x200) */
+    int             vy1 = 3 + (int)VIEW3D_HEIGHT / sc ;
     TQAImage        image ;
     TQAError        err ;
     TQATexture     *tex = NULL ;
